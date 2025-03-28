@@ -28,49 +28,21 @@ const twitterUsernameSchema = z
  */
 export const twitterEnvSchema = z.object({
     TWITTER_DRY_RUN: z.boolean(),
-    TWITTER_USERNAME: z.string().min(1, "X/Twitter username is required"),
-    TWITTER_PASSWORD: z.string().min(1, "X/Twitter password is required"),
-    TWITTER_EMAIL: z.string().email("Valid X/Twitter email is required"),
+    TWITTER_APP_KEY: z.string().min(1, "X/Twitter App Key is required"),
+    TWITTER_APP_SECRET: z.string().min(1, "X/Twitter App Secret is required"),
+    TWITTER_ACCESS_TOKEN: z.string().min(1, "X/Twitter Access Token is required"),
+    TWITTER_ACCESS_SECRET: z.string().min(1, "X/Twitter Access Secret is required"),
     MAX_TWEET_LENGTH: z.number().int().default(DEFAULT_MAX_TWEET_LENGTH),
     TWITTER_SEARCH_ENABLE: z.boolean().default(false),
-    TWITTER_2FA_SECRET: z.string(),
     TWITTER_RETRY_LIMIT: z.number().int(),
     TWITTER_POLL_INTERVAL: z.number().int(),
     TWITTER_TARGET_USERS: z.array(twitterUsernameSchema).default([]),
-    // I guess it's possible to do the transformation with zod
-    // not sure it's preferable, maybe a readability issue
-    // since more people will know js/ts than zod
-    /*
-        z
-        .string()
-        .transform((val) => val.trim())
-        .pipe(
-            z.string()
-                .transform((val) =>
-                    val ? val.split(',').map((u) => u.trim()).filter(Boolean) : []
-                )
-                .pipe(
-                    z.array(
-                        z.string()
-                            .min(1)
-                            .max(15)
-                            .regex(
-                                /^[A-Za-z][A-Za-z0-9_]*[A-Za-z0-9]$|^[A-Za-z]$/,
-                                'Invalid Twitter username format'
-                            )
-                    )
-                )
-                .transform((users) => users.join(','))
-        )
-        .optional()
-        .default(''),
-    */
-    ENABLE_TWITTER_POST_GENERATION: z.boolean(),
+    ENABLE_TWITTER_POST_GENERATION: z.boolean().default(true),
     POST_INTERVAL_MIN: z.number().int(),
     POST_INTERVAL_MAX: z.number().int(),
-    ENABLE_ACTION_PROCESSING: z.boolean(),
+    ENABLE_ACTION_PROCESSING: z.boolean().default(false),
     ACTION_INTERVAL: z.number().int(),
-    POST_IMMEDIATELY: z.boolean(),
+    POST_IMMEDIATELY: z.boolean().default(false),
     TWITTER_SPACES_ENABLE: z.boolean().default(false),
     MAX_ACTIONS_PROCESSING: z.number().int(),
     ACTION_TIMELINE_TYPE: z
@@ -123,17 +95,21 @@ export async function validateTwitterConfig(
                         process.env.TWITTER_DRY_RUN
                 ) ?? false, // parseBooleanFromText return null if "", map "" to false
 
-            TWITTER_USERNAME:
-                runtime.getSetting("TWITTER_USERNAME") ||
-                process.env.TWITTER_USERNAME,
+            TWITTER_APP_KEY: 
+                runtime.getSetting("TWITTER_APP_KEY") ||
+                process.env.TWITTER_APP_KEY,
 
-            TWITTER_PASSWORD:
-                runtime.getSetting("TWITTER_PASSWORD") ||
-                process.env.TWITTER_PASSWORD,
+            TWITTER_APP_SECRET:
+                runtime.getSetting("TWITTER_APP_SECRET") ||
+                process.env.TWITTER_APP_SECRET,
 
-            TWITTER_EMAIL:
-                runtime.getSetting("TWITTER_EMAIL") ||
-                process.env.TWITTER_EMAIL,
+            TWITTER_ACCESS_TOKEN:
+                runtime.getSetting("TWITTER_ACCESS_TOKEN") ||
+                process.env.TWITTER_ACCESS_TOKEN,
+            
+            TWITTER_ACCESS_SECRET:
+                runtime.getSetting("TWITTER_ACCESS_SECRET") ||
+                process.env.TWITTER_ACCESS_SECRET,
 
             // number as string?
             MAX_TWEET_LENGTH: safeParseInt(

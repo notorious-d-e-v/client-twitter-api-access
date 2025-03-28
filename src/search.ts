@@ -1,4 +1,4 @@
-import { SearchMode } from "agent-twitter-client";
+// import { SearchMode } from "agent-twitter-client";
 import { composeContext, elizaLogger } from "@elizaos/core";
 import { generateMessageResponse, generateText } from "@elizaos/core";
 import { messageCompletionFooter } from "@elizaos/core";
@@ -83,7 +83,7 @@ export class TwitterSearchClient {
             const recentTweets = await this.client.fetchSearchTweets(
                 searchTerm,
                 20,
-                SearchMode.Top
+                // SearchMode.Top
             );
             elizaLogger.log("Search tweets fetched");
 

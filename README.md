@@ -1,15 +1,23 @@
-# Eliza Twitter/X Client
+# Eliza Twitter/X Client (V2 API, API Access)
 
-This package provides Twitter/X integration for the Eliza AI agent.
+Twitter/X integration for Eliza Agents!
+
+This library uses X API Access Keys instead of X username and password.
+We consider this to be more reliable, because your account won't get banned.
+Additionally, it's not a constant arms race to find new ways to outsmart the X dev team.
+
+Use [@elizaos-plugins/twitter-client](https://github.com/elizaos-plugins/client-twitter) if you are looking to use username and password authentication instead.
+
+This is a work in progress and will be built out as needed.
 
 ## Features
 
 - Post generation and management
-- Interaction handling (mentions, replies)
-- Search functionality
-- Twitter Spaces support with STT/TTS capabilities
-- Media handling (images, videos)
-- Approval workflow via Discord (optional)
+- ~~Interaction handling (mentions, replies)~~ (needs implementing)
+- ~~Search functionality~~ (needs implementing)
+- ~~Twitter Spaces support with STT/TTS capabilities~~ (needs implementing)
+- ~~Media handling (images, videos)~~ (needs implementing)
+- ~~Approval workflow via Discord (optional)~~ (needs implementing)
 
 ## Setup Guide
 
@@ -20,16 +28,29 @@ This package provides Twitter/X integration for the Eliza AI agent.
 - Discord bot (if using approval workflow)
 - ElevenLabs API key (if using Spaces with TTS)
 
+### Step 0: Get Your API Keys
+
+1. Sign into your X account.
+2. Go to https://developer.x.com/en/portal/petition/essential/basic-info and sign up for Developer Access. You can choose the Free Tier if you are just starting out.
+3. Go to https://developer.x.com/en/portal/projects-and-apps
+4. Find the Default Project that X created for you.
+5. Look for the App that X created for you and click the Settings gear.
+6. Click the "Keys and tokens" tab.
+7. Alternatively, go to https://developer.x.com/en/portal/projects/<XXXXXX>/apps/<YYYYYY>/keys where <XXXXX> is your project ID and <YYYYYY> is your app ID.
+8. Look for "Consumer Keys" and click Regenerate. **Important** Write these down after you regenerate them.
+9. Look for "Authentication Tokens" then look for "Access Token and Secret". Click Regenerate, and make sure you give Read, Write, and DM permissions. **Important** Write down the keys and values.
+10. Now you can use your API Key, API Secret, Access Token, and Access Secret to authenticate your user and use the API. We will do this in Step 1 below.   
+
 ### Step 1: Configure Environment Variables
 
 Create or edit `.env` file in your project root:
 
 ```bash
 # Twitter API Credentials
-TWITTER_USERNAME=           # Your Twitter/X username
-TWITTER_PASSWORD=           # Your Twitter/X password
-TWITTER_EMAIL=              # Your Twitter/X email
-TWITTER_2FA_SECRET=         # Optional: 2FA secret for login
+TWITTER_APP_KEY=            # API Key from the previous step
+TWITTER_APP_SECRET=         # API Secret from the previous step
+TWITTER_ACCESS_TOKEN=       # Access Token from the previous step
+TWITTER_ACCESS_SECRET=      # Access Secret from the previous step
 
 # Twitter Client Configuration
 TWITTER_DRY_RUN=false      # Set to true for testing without posting

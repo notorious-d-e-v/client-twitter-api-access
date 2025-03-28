@@ -1,4 +1,4 @@
-import { SearchMode, type Tweet } from "agent-twitter-client";
+import { TweetV2 } from "twitter-api-v2";
 import {
     composeContext,
     generateMessageResponse,
@@ -125,7 +125,7 @@ export class TwitterInteractionClient {
                 await this.client.fetchSearchTweets(
                     `@${twitterUsername}`,
                     20,
-                    SearchMode.Latest
+                    // SearchMode.Latest
                 )
             ).tweets;
 
@@ -152,7 +152,7 @@ export class TwitterInteractionClient {
                                 await this.client.twitterClient.fetchSearchTweets(
                                     `from:${username}`,
                                     3,
-                                    SearchMode.Latest
+                                    // SearchMode.Latest
                                 )
                             ).tweets;
 
@@ -561,16 +561,16 @@ export class TwitterInteractionClient {
     }
 
     async buildConversationThread(
-        tweet: Tweet,
+        tweet: TweetV2,
         maxReplies = 10
-    ): Promise<Tweet[]> {
-        const thread: Tweet[] = [];
+    ): Promise<TweetV2[]> {
+        const thread: TweetV2[] = [];
         const visited: Set<string> = new Set();
 
-        async function processThread(currentTweet: Tweet, depth = 0) {
+        async function processThread(currentTweet: TweetV2, depth = 0) {
             elizaLogger.log("Processing tweet:", {
                 id: currentTweet.id,
-                inReplyToStatusId: currentTweet.inReplyToStatusId,
+                inReplyToStatusId: currentTweet.in_reply_to_user_id,
                 depth: depth,
             });
 
@@ -590,15 +590,15 @@ export class TwitterInteractionClient {
             );
             if (!memory) {
                 const roomId = stringToUuid(
-                    currentTweet.conversationId + "-" + this.runtime.agentId
+                    currentTweet.conversation_id + "-" + this.runtime.agentId
                 );
-                const userId = stringToUuid(currentTweet.userId);
+                const userId = stringToUuid(currentTweet.author_id);
 
                 await this.runtime.ensureConnection(
                     userId,
                     roomId,
-                    currentTweet.username,
-                    currentTweet.name,
+                    currentTweet.author_id,
+                    currentTweet.author_id,
                     "twitter"
                 );
 

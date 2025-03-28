@@ -4,7 +4,7 @@ import { validateTwitterConfig, type TwitterConfig } from "./environment.ts";
 import { TwitterInteractionClient } from "./interactions.ts";
 import { TwitterPostClient } from "./post.ts";
 import { TwitterSearchClient } from "./search.ts";
-import { TwitterSpaceClient } from "./spaces.ts";
+// import { TwitterSpaceClient } from "./spaces.ts";
 
 /**
  * A manager that orchestrates all specialized Twitter logic:
@@ -17,9 +17,9 @@ import { TwitterSpaceClient } from "./spaces.ts";
 class TwitterManager {
     client: ClientBase;
     post: TwitterPostClient;
-    search: TwitterSearchClient;
-    interaction: TwitterInteractionClient;
-    space?: TwitterSpaceClient;
+    // search: TwitterSearchClient;
+    // interaction: TwitterInteractionClient;
+    // space?: TwitterSpaceClient;
 
     constructor(runtime: IAgentRuntime, twitterConfig: TwitterConfig) {
         // Pass twitterConfig to the base client
@@ -35,15 +35,15 @@ class TwitterManager {
             elizaLogger.warn("2. burns your rate limit");
             elizaLogger.warn("3. can get your account banned");
             elizaLogger.warn("use at your own risk");
-            this.search = new TwitterSearchClient(this.client, runtime);
+        //     this.search = new TwitterSearchClient(this.client, runtime);
         }
 
         // Mentions and interactions
-        this.interaction = new TwitterInteractionClient(this.client, runtime);
+        // this.interaction = new TwitterInteractionClient(this.client, runtime);
 
         // Optional Spaces logic (enabled if TWITTER_SPACES_ENABLE is true)
         if (twitterConfig.TWITTER_SPACES_ENABLE) {
-            this.space = new TwitterSpaceClient(this.client, runtime);
+            // this.space = new TwitterSpaceClient(this.client, runtime);
         }
     }
 
@@ -54,6 +54,7 @@ class TwitterManager {
 
 export const TwitterClientInterface: Client = {
     name: 'twitter',
+    description: 'Twitter client',
     async start(runtime: IAgentRuntime) {
         const twitterConfig: TwitterConfig =
             await validateTwitterConfig(runtime);
@@ -68,18 +69,18 @@ export const TwitterClientInterface: Client = {
         // Start the posting loop
         await manager.post.start();
 
-        // Start the search logic if it exists
-        if (manager.search) {
-            await manager.search.start();
-        }
+        // // Start the search logic if it exists
+        // if (manager.search) {
+        //     await manager.search.start();
+        // }
 
-        // Start interactions (mentions, replies)
-        await manager.interaction.start();
+        // // Start interactions (mentions, replies)
+        // await manager.interaction.start();
 
-        // If Spaces are enabled, start the periodic check
-        if (manager.space) {
-            manager.space.startPeriodicSpaceCheck();
-        }
+        // // If Spaces are enabled, start the periodic check
+        // if (manager.space) {
+        //     manager.space.startPeriodicSpaceCheck();
+        // }
 
         return manager;
     },
