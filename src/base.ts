@@ -13,10 +13,13 @@ import {
 import {
     TwitterApi,
     TweetV2,
-    UserV2
+    UserV2,
+    TwitterV2IncludesHelper
 } from "twitter-api-v2";
 import { EventEmitter } from "events";
 import type { TwitterConfig } from "./environment.ts";
+import type { ElizaTweet, TwitterProfile } from "./types.ts";
+import { createElizaTweet } from "./utils.ts";
 
 export function extractAnswer(text: string): string {
     const startIndex = text.indexOf("Answer: ") + 8;
@@ -30,19 +33,11 @@ interface QueryTweetsResponse {
     previous?: string;
 }
 
-type TwitterProfile = {
-    id: string;
-    username: string;
-    screenName: string;
-    bio: string;
-    nicknames: string[];
-};
-
 // create a default profile
 const defaultProfile: TwitterProfile = {
     id: "",
     username: "",
-    screenName: "",
+    name: "",
     bio: "",
     nicknames: [],
 };
@@ -212,7 +207,7 @@ export class ClientBase extends EventEmitter {
             this.runtime.character.twitterProfile = {
                 id: this.profile.id,
                 username: this.profile.username,
-                screenName: this.profile.screenName,
+                name: this.profile.name,
                 bio: this.profile.bio,
                 nicknames: this.profile.nicknames,
             };
@@ -317,6 +312,17 @@ export class ClientBase extends EventEmitter {
         }
     }
 
+    async getMentions(userId: string, count: number): Promise<ElizaTweet[]> {
+        elizaLogger.debug("fetching mentions");
+        const mentions = await this.twitterClient.v2.userMentionTimeline(userId, {
+            max_results: count,
+            "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+            "expansions": "author_id,referenced_tweets.id"
+        });
+        
+        return mentions.tweets.map((tweet) => createElizaTweet(tweet, mentions.includes));
+    }
+
     private async populateTimeline() {
         elizaLogger.debug("populating timeline...");
 
@@ -383,7 +389,7 @@ export class ClientBase extends EventEmitter {
                             this.runtime.agentId,
                             roomId,
                             this.profile.username,
-                            this.profile.screenName,
+                            this.profile.name,
                             "twitter"
                         );
                     } else {
@@ -516,7 +522,7 @@ export class ClientBase extends EventEmitter {
                     this.runtime.agentId,
                     roomId,
                     this.profile.username,
-                    this.profile.screenName,
+                    this.profile.name,
                     "twitter"
                 );
             } else {
@@ -676,7 +682,7 @@ export class ClientBase extends EventEmitter {
         return {
             id: userData.id,
             username: userData.username,
-            screenName: userData.name,
+            name: userData.name,
             bio: userData.description,
             nicknames: [],
         };

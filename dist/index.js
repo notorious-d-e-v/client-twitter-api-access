@@ -3,18 +3,381 @@ import { elizaLogger as elizaLogger5 } from "@elizaos/core";
 
 // src/base.ts
 import {
-  getEmbeddingZeroVector,
-  elizaLogger,
-  stringToUuid
+  getEmbeddingZeroVector as getEmbeddingZeroVector2,
+  elizaLogger as elizaLogger3,
+  stringToUuid as stringToUuid2
 } from "@elizaos/core";
 import {
   TwitterApi
 } from "twitter-api-v2";
 import { EventEmitter } from "events";
+
+// src/utils.ts
+import { getEmbeddingZeroVector } from "@elizaos/core";
+import { stringToUuid } from "@elizaos/core";
+import { elizaLogger as elizaLogger2 } from "@elizaos/core";
+import fs from "fs";
+import path from "path";
+import { TwitterV2IncludesHelper } from "twitter-api-v2";
+var wait = (minTime = 1e3, maxTime = 3e3) => {
+  const waitTime = Math.floor(Math.random() * (maxTime - minTime + 1)) + minTime;
+  return new Promise((resolve) => setTimeout(resolve, waitTime));
+};
+async function buildConversationThread(tweet, client, maxReplies = 10) {
+  const thread = [];
+  const visited = /* @__PURE__ */ new Set();
+  async function processThread(currentTweet, depth = 0) {
+    var _a;
+    elizaLogger2.debug("Processing tweet:", {
+      id: currentTweet.id,
+      inReplyToStatusId: currentTweet.inReplyToStatusId,
+      depth
+    });
+    if (!currentTweet) {
+      elizaLogger2.debug("No current tweet found for thread building");
+      return;
+    }
+    if (depth >= maxReplies) {
+      elizaLogger2.debug("Reached maximum reply depth", depth);
+      return;
+    }
+    const memory = await client.runtime.messageManager.getMemoryById(
+      stringToUuid(currentTweet.id + "-" + client.runtime.agentId)
+    );
+    if (!memory) {
+      const roomId = stringToUuid(
+        currentTweet.conversationId + "-" + client.runtime.agentId
+      );
+      const userId = stringToUuid(currentTweet.authorId);
+      await client.runtime.ensureConnection(
+        userId,
+        roomId,
+        currentTweet.authorUsername,
+        currentTweet.authorName,
+        "twitter"
+      );
+      await client.runtime.messageManager.createMemory({
+        id: stringToUuid(
+          currentTweet.id + "-" + client.runtime.agentId
+        ),
+        agentId: client.runtime.agentId,
+        content: {
+          text: currentTweet.text,
+          source: "twitter",
+          url: currentTweet.permanentUrl,
+          imageUrls: currentTweet.photos.map((p) => p.url) || [],
+          inReplyTo: currentTweet.inReplyToStatusId ? stringToUuid(
+            currentTweet.inReplyToStatusId + "-" + client.runtime.agentId
+          ) : void 0
+        },
+        createdAt: currentTweet.timestamp * 1e3,
+        roomId,
+        userId: currentTweet.authorId === client.profile.id ? client.runtime.agentId : stringToUuid(currentTweet.authorId),
+        embedding: getEmbeddingZeroVector()
+      });
+    }
+    if (visited.has(currentTweet.id)) {
+      elizaLogger2.debug("Already visited tweet:", currentTweet.id);
+      return;
+    }
+    visited.add(currentTweet.id);
+    thread.unshift(currentTweet);
+    elizaLogger2.debug("Current thread state:", {
+      length: thread.length,
+      currentDepth: depth,
+      tweetId: currentTweet.id
+    });
+    if (currentTweet.inReplyToStatusId) {
+      elizaLogger2.debug(
+        "Fetching parent tweet:",
+        currentTweet.inReplyToStatusId
+      );
+      try {
+        const parentTweetResult = await client.requestQueue.add(async () => {
+          return await client.twitterClient.v2.singleTweet(currentTweet.inReplyToStatusId, {
+            "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+            "expansions": "author_id,referenced_tweets.id"
+          });
+        });
+        const parentTweet = createElizaTweet(parentTweetResult.data, new TwitterV2IncludesHelper(parentTweetResult));
+        if (parentTweet) {
+          elizaLogger2.debug("Found parent tweet:", {
+            id: parentTweet.id,
+            text: (_a = parentTweet.text) == null ? void 0 : _a.slice(0, 50)
+          });
+          await processThread(parentTweet, depth + 1);
+        } else {
+          elizaLogger2.debug(
+            "No parent tweet found for:",
+            currentTweet.inReplyToStatusId
+          );
+        }
+      } catch (error) {
+        elizaLogger2.error("Error fetching parent tweet:", {
+          tweetId: currentTweet.inReplyToStatusId,
+          error
+        });
+      }
+    } else {
+      elizaLogger2.debug(
+        "Reached end of reply chain at:",
+        currentTweet.id
+      );
+    }
+  }
+  await processThread(tweet, 0);
+  elizaLogger2.debug("Final thread built:", {
+    totalTweets: thread.length,
+    tweetIds: thread.map((t) => {
+      var _a;
+      return {
+        id: t.id,
+        text: (_a = t.text) == null ? void 0 : _a.slice(0, 50)
+      };
+    })
+  });
+  return thread;
+}
+async function fetchMediaData(attachments) {
+  return Promise.all(
+    attachments.map(async (attachment) => {
+      if (/^(http|https):\/\//.test(attachment.url)) {
+        const response = await fetch(attachment.url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch file: ${attachment.url}`);
+        }
+        const mediaBuffer = Buffer.from(await response.arrayBuffer());
+        const mediaType = attachment.contentType;
+        return { data: mediaBuffer, mediaType };
+      } else if (fs.existsSync(attachment.url)) {
+        const mediaBuffer = await fs.promises.readFile(
+          path.resolve(attachment.url)
+        );
+        const mediaType = attachment.contentType;
+        return { data: mediaBuffer, mediaType };
+      } else {
+        throw new Error(
+          `File not found: ${attachment.url}. Make sure the path is correct.`
+        );
+      }
+    })
+  );
+}
+async function sendTweet(client, content, roomId, twitterUsername, inReplyTo) {
+  var _a, _b, _c, _d, _e, _f;
+  const maxTweetLength = client.twitterConfig.MAX_TWEET_LENGTH;
+  const isLongTweet = maxTweetLength > 280;
+  const tweetChunks = splitTweetContent(content.text, maxTweetLength);
+  const sentTweets = [];
+  let previousTweetId = inReplyTo;
+  for (const chunk of tweetChunks) {
+    let mediaData = null;
+    if (content.attachments && content.attachments.length > 0) {
+      mediaData = await fetchMediaData(content.attachments);
+    }
+    const cleanChunk = deduplicateMentions(chunk.trim());
+    const result = await client.requestQueue.add(
+      async () => isLongTweet ? client.twitterClient.sendLongTweet(
+        cleanChunk,
+        previousTweetId,
+        mediaData
+      ) : client.twitterClient.sendTweet(
+        cleanChunk,
+        previousTweetId,
+        mediaData
+      )
+    );
+    const body = await result.json();
+    const tweetResult = isLongTweet ? (_c = (_b = (_a = body == null ? void 0 : body.data) == null ? void 0 : _a.notetweet_create) == null ? void 0 : _b.tweet_results) == null ? void 0 : _c.result : (_f = (_e = (_d = body == null ? void 0 : body.data) == null ? void 0 : _d.create_tweet) == null ? void 0 : _e.tweet_results) == null ? void 0 : _f.result;
+    if (tweetResult) {
+      const finalTweet = {
+        id: tweetResult.rest_id,
+        text: tweetResult.legacy.full_text,
+        conversationId: tweetResult.legacy.conversation_id_str,
+        timestamp: new Date(tweetResult.legacy.created_at).getTime() / 1e3,
+        userId: tweetResult.legacy.user_id_str,
+        inReplyToStatusId: tweetResult.legacy.in_reply_to_status_id_str,
+        permanentUrl: `https://twitter.com/${twitterUsername}/status/${tweetResult.rest_id}`,
+        hashtags: [],
+        mentions: [],
+        photos: [],
+        thread: [],
+        urls: [],
+        videos: []
+      };
+      sentTweets.push(finalTweet);
+      previousTweetId = finalTweet.id;
+    } else {
+      elizaLogger2.error("Error sending tweet chunk:", {
+        chunk,
+        response: body
+      });
+    }
+    await wait(1e3, 2e3);
+  }
+  const memories = sentTweets.map((tweet) => ({
+    id: stringToUuid(tweet.id + "-" + client.runtime.agentId),
+    agentId: client.runtime.agentId,
+    userId: client.runtime.agentId,
+    content: {
+      tweetId: tweet.id,
+      text: tweet.text,
+      source: "twitter",
+      url: tweet.permanentUrl,
+      imageUrls: tweet.photos.map((p) => p.url) || [],
+      inReplyTo: tweet.inReplyToStatusId ? stringToUuid(
+        tweet.inReplyToStatusId + "-" + client.runtime.agentId
+      ) : void 0
+    },
+    roomId,
+    embedding: getEmbeddingZeroVector(),
+    createdAt: tweet.timestamp * 1e3
+  }));
+  return memories;
+}
+function splitTweetContent(content, maxLength) {
+  const paragraphs = content.split("\n\n").map((p) => p.trim());
+  const tweets = [];
+  let currentTweet = "";
+  for (const paragraph of paragraphs) {
+    if (!paragraph) continue;
+    if ((currentTweet + "\n\n" + paragraph).trim().length <= maxLength) {
+      if (currentTweet) {
+        currentTweet += "\n\n" + paragraph;
+      } else {
+        currentTweet = paragraph;
+      }
+    } else {
+      if (currentTweet) {
+        tweets.push(currentTweet.trim());
+      }
+      if (paragraph.length <= maxLength) {
+        currentTweet = paragraph;
+      } else {
+        const chunks = splitParagraph(paragraph, maxLength);
+        tweets.push(...chunks.slice(0, -1));
+        currentTweet = chunks[chunks.length - 1];
+      }
+    }
+  }
+  if (currentTweet) {
+    tweets.push(currentTweet.trim());
+  }
+  return tweets;
+}
+function extractUrls(paragraph) {
+  const urlRegex = /https?:\/\/[^\s]+/g;
+  const placeholderMap = /* @__PURE__ */ new Map();
+  let urlIndex = 0;
+  const textWithPlaceholders = paragraph.replace(urlRegex, (match) => {
+    const placeholder = `<<URL_CONSIDERER_23_${urlIndex}>>`;
+    placeholderMap.set(placeholder, match);
+    urlIndex++;
+    return placeholder;
+  });
+  return { textWithPlaceholders, placeholderMap };
+}
+function splitSentencesAndWords(text, maxLength) {
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const chunks = [];
+  let currentChunk = "";
+  for (const sentence of sentences) {
+    if ((currentChunk + " " + sentence).trim().length <= maxLength) {
+      if (currentChunk) {
+        currentChunk += " " + sentence;
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      if (currentChunk) {
+        chunks.push(currentChunk.trim());
+      }
+      if (sentence.length <= maxLength) {
+        currentChunk = sentence;
+      } else {
+        const words = sentence.split(" ");
+        currentChunk = "";
+        for (const word of words) {
+          if ((currentChunk + " " + word).trim().length <= maxLength) {
+            if (currentChunk) {
+              currentChunk += " " + word;
+            } else {
+              currentChunk = word;
+            }
+          } else {
+            if (currentChunk) {
+              chunks.push(currentChunk.trim());
+            }
+            currentChunk = word;
+          }
+        }
+      }
+    }
+  }
+  if (currentChunk) {
+    chunks.push(currentChunk.trim());
+  }
+  return chunks;
+}
+function deduplicateMentions(paragraph) {
+  const mentionRegex = /^@(\w+)(?:\s+@(\w+))*(\s+|$)/;
+  const matches = paragraph.match(mentionRegex);
+  if (!matches) {
+    return paragraph;
+  }
+  let mentions = matches.slice(0, 1)[0].trim().split(" ");
+  mentions = [...new Set(mentions)];
+  const uniqueMentionsString = mentions.join(" ");
+  const endOfMentions = paragraph.indexOf(matches[0]) + matches[0].length;
+  return uniqueMentionsString + " " + paragraph.slice(endOfMentions);
+}
+function restoreUrls(chunks, placeholderMap) {
+  return chunks.map((chunk) => {
+    return chunk.replace(/<<URL_CONSIDERER_23_(\d+)>>/g, (match) => {
+      const original = placeholderMap.get(match);
+      return original || match;
+    });
+  });
+}
+function splitParagraph(paragraph, maxLength) {
+  const { textWithPlaceholders, placeholderMap } = extractUrls(paragraph);
+  const splittedChunks = splitSentencesAndWords(
+    textWithPlaceholders,
+    maxLength
+  );
+  const restoredChunks = restoreUrls(splittedChunks, placeholderMap);
+  return restoredChunks;
+}
+function createElizaTweet(fetchedTweetResult, includes) {
+  if (!fetchedTweetResult) {
+    return null;
+  }
+  const author = includes.author(fetchedTweetResult);
+  const tweetRepliedTo = includes.repliedTo(fetchedTweetResult);
+  const tweet = {
+    id: fetchedTweetResult.id,
+    text: fetchedTweetResult.text,
+    conversationId: fetchedTweetResult.conversation_id,
+    timestamp: fetchedTweetResult.created_at ? new Date(fetchedTweetResult.created_at).getTime() : null,
+    authorName: author.name,
+    authorUsername: author.username,
+    photos: [],
+    thread: [],
+    videos: [],
+    mentions: [],
+    permanentUrl: `https://x.com/${author.username}/status/${fetchedTweetResult.data.id}`,
+    inReplyToStatusId: tweetRepliedTo == null ? void 0 : tweetRepliedTo.id,
+    isReply: !!tweetRepliedTo,
+    isRetweet: false
+  };
+  return tweet;
+}
+
+// src/base.ts
 var defaultProfile = {
   id: "",
   username: "",
-  screenName: "",
+  name: "",
   bio: "",
   nicknames: []
 };
@@ -124,21 +487,21 @@ var ClientBase = class extends EventEmitter {
       accessToken: this.twitterConfig.TWITTER_ACCESS_TOKEN,
       accessSecret: this.twitterConfig.TWITTER_ACCESS_SECRET
     });
-    elizaLogger.info("Twitter client initialized with access token and access secret.");
+    elizaLogger3.info("Twitter client initialized with access token and access secret.");
     this.runtime.character.style.all.join("\n- ") + "- " + this.runtime.character.style.post.join();
   }
   async init() {
     this.profile = await this.fetchProfile();
     if (this.profile) {
-      elizaLogger.log("Twitter user ID:", this.profile.id);
-      elizaLogger.log(
+      elizaLogger3.log("Twitter user ID:", this.profile.id);
+      elizaLogger3.log(
         "Twitter loaded:",
         JSON.stringify(this.profile, null, 10)
       );
       this.runtime.character.twitterProfile = {
         id: this.profile.id,
         username: this.profile.username,
-        screenName: this.profile.screenName,
+        name: this.profile.name,
         bio: this.profile.bio,
         nicknames: this.profile.nicknames
       };
@@ -147,18 +510,18 @@ var ClientBase = class extends EventEmitter {
     }
   }
   async fetchOwnPosts(count) {
-    elizaLogger.debug("fetching own posts");
+    elizaLogger3.debug("fetching own posts");
     return [];
   }
   /**
    * Fetch timeline for twitter account, optionally only from followed accounts
    */
   async fetchHomeTimeline(count, following) {
-    elizaLogger.debug("fetching home timeline");
+    elizaLogger3.debug("fetching home timeline");
     return [];
   }
   async fetchTimelineForActions(count) {
-    elizaLogger.debug("fetching timeline for actions");
+    elizaLogger3.debug("fetching timeline for actions");
     return [];
   }
   async fetchSearchTweets(query, maxTweets, cursor) {
@@ -182,22 +545,31 @@ var ClientBase = class extends EventEmitter {
         );
         return result ?? { tweets: [] };
       } catch (error) {
-        elizaLogger.error("Error fetching search tweets:", error);
+        elizaLogger3.error("Error fetching search tweets:", error);
         return { tweets: [] };
       }
     } catch (error) {
-      elizaLogger.error("Error fetching search tweets:", error);
+      elizaLogger3.error("Error fetching search tweets:", error);
       return { tweets: [] };
     }
   }
+  async getMentions(userId, count) {
+    elizaLogger3.debug("fetching mentions");
+    const mentions = await this.twitterClient.v2.userMentionTimeline(userId, {
+      max_results: count,
+      "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+      "expansions": "author_id,referenced_tweets.id"
+    });
+    return mentions.tweets.map((tweet) => createElizaTweet(tweet, mentions.includes));
+  }
   async populateTimeline() {
     var _a;
-    elizaLogger.debug("populating timeline...");
+    elizaLogger3.debug("populating timeline...");
     const cachedTimeline = await this.getCachedTimeline();
     if (cachedTimeline) {
       const existingMemories2 = await this.runtime.messageManager.getMemoriesByRoomIds({
         roomIds: cachedTimeline.map(
-          (tweet) => stringToUuid(
+          (tweet) => stringToUuid2(
             tweet.conversationId + "-" + this.runtime.agentId
           )
         )
@@ -207,30 +579,30 @@ var ClientBase = class extends EventEmitter {
       );
       const someCachedTweetsExist = cachedTimeline.some(
         (tweet) => existingMemoryIds2.has(
-          stringToUuid(tweet.id + "-" + this.runtime.agentId)
+          stringToUuid2(tweet.id + "-" + this.runtime.agentId)
         )
       );
       if (someCachedTweetsExist) {
         const tweetsToSave2 = cachedTimeline.filter(
           (tweet) => !existingMemoryIds2.has(
-            stringToUuid(tweet.id + "-" + this.runtime.agentId)
+            stringToUuid2(tweet.id + "-" + this.runtime.agentId)
           )
         );
         console.log({
           processingTweets: tweetsToSave2.map((tweet) => tweet.id).join(",")
         });
         for (const tweet of tweetsToSave2) {
-          elizaLogger.log("Saving Tweet", tweet.id);
-          const roomId = stringToUuid(
+          elizaLogger3.log("Saving Tweet", tweet.id);
+          const roomId = stringToUuid2(
             tweet.conversationId + "-" + this.runtime.agentId
           );
-          const userId = tweet.userId === this.profile.id ? this.runtime.agentId : stringToUuid(tweet.userId);
+          const userId = tweet.userId === this.profile.id ? this.runtime.agentId : stringToUuid2(tweet.userId);
           if (tweet.userId === this.profile.id) {
             await this.runtime.ensureConnection(
               this.runtime.agentId,
               roomId,
               this.profile.username,
-              this.profile.screenName,
+              this.profile.name,
               "twitter"
             );
           } else {
@@ -246,32 +618,32 @@ var ClientBase = class extends EventEmitter {
             text: tweet.text,
             url: tweet.permanentUrl,
             source: "twitter",
-            inReplyTo: tweet.inReplyToStatusId ? stringToUuid(
+            inReplyTo: tweet.inReplyToStatusId ? stringToUuid2(
               tweet.inReplyToStatusId + "-" + this.runtime.agentId
             ) : void 0
           };
-          elizaLogger.log("Creating memory for tweet", tweet.id);
+          elizaLogger3.log("Creating memory for tweet", tweet.id);
           const memory = await this.runtime.messageManager.getMemoryById(
-            stringToUuid(tweet.id + "-" + this.runtime.agentId)
+            stringToUuid2(tweet.id + "-" + this.runtime.agentId)
           );
           if (memory) {
-            elizaLogger.log(
+            elizaLogger3.log(
               "Memory already exists, skipping timeline population"
             );
             break;
           }
           await this.runtime.messageManager.createMemory({
-            id: stringToUuid(tweet.id + "-" + this.runtime.agentId),
+            id: stringToUuid2(tweet.id + "-" + this.runtime.agentId),
             userId,
             content,
             agentId: this.runtime.agentId,
             roomId,
-            embedding: getEmbeddingZeroVector(),
+            embedding: getEmbeddingZeroVector2(),
             createdAt: tweet.timestamp * 1e3
           });
           await this.cacheTweet(tweet);
         }
-        elizaLogger.log(
+        elizaLogger3.log(
           `Populated ${tweetsToSave2.length} missing tweets from the cache.`
         );
         return;
@@ -290,7 +662,7 @@ var ClientBase = class extends EventEmitter {
     for (const tweet of allTweets) {
       tweetIdsToCheck.add(tweet.id);
       roomIds.add(
-        stringToUuid(tweet.conversationId + "-" + this.runtime.agentId)
+        stringToUuid2(tweet.conversationId + "-" + this.runtime.agentId)
       );
     }
     const existingMemories = await this.runtime.messageManager.getMemoriesByRoomIds({
@@ -301,10 +673,10 @@ var ClientBase = class extends EventEmitter {
     );
     const tweetsToSave = allTweets.filter(
       (tweet) => !existingMemoryIds.has(
-        stringToUuid(tweet.id + "-" + this.runtime.agentId)
+        stringToUuid2(tweet.id + "-" + this.runtime.agentId)
       )
     );
-    elizaLogger.debug({
+    elizaLogger3.debug({
       processingTweets: tweetsToSave.map((tweet) => tweet.id).join(",")
     });
     await this.runtime.ensureUserExists(
@@ -314,17 +686,17 @@ var ClientBase = class extends EventEmitter {
       "twitter"
     );
     for (const tweet of tweetsToSave) {
-      elizaLogger.log("Saving Tweet", tweet.id);
-      const roomId = stringToUuid(
+      elizaLogger3.log("Saving Tweet", tweet.id);
+      const roomId = stringToUuid2(
         tweet.conversationId + "-" + this.runtime.agentId
       );
-      const userId = tweet.userId === this.profile.id ? this.runtime.agentId : stringToUuid(tweet.userId);
+      const userId = tweet.userId === this.profile.id ? this.runtime.agentId : stringToUuid2(tweet.userId);
       if (tweet.userId === this.profile.id) {
         await this.runtime.ensureConnection(
           this.runtime.agentId,
           roomId,
           this.profile.username,
-          this.profile.screenName,
+          this.profile.name,
           "twitter"
         );
       } else {
@@ -340,15 +712,15 @@ var ClientBase = class extends EventEmitter {
         text: tweet.text,
         url: tweet.permanentUrl,
         source: "twitter",
-        inReplyTo: tweet.inReplyToStatusId ? stringToUuid(tweet.inReplyToStatusId) : void 0
+        inReplyTo: tweet.inReplyToStatusId ? stringToUuid2(tweet.inReplyToStatusId) : void 0
       };
       await this.runtime.messageManager.createMemory({
-        id: stringToUuid(tweet.id + "-" + this.runtime.agentId),
+        id: stringToUuid2(tweet.id + "-" + this.runtime.agentId),
         userId,
         content,
         agentId: this.runtime.agentId,
         roomId,
-        embedding: getEmbeddingZeroVector(),
+        embedding: getEmbeddingZeroVector2(),
         createdAt: tweet.timestamp * 1e3
       });
       await this.cacheTweet(tweet);
@@ -372,11 +744,11 @@ var ClientBase = class extends EventEmitter {
         }
       );
       if (recentMessage.length > 0 && recentMessage[0].content === message.content) {
-        elizaLogger.debug("Message already saved", recentMessage[0].id);
+        elizaLogger3.debug("Message already saved", recentMessage[0].id);
       } else {
         await this.runtime.messageManager.createMemory({
           ...message,
-          embedding: getEmbeddingZeroVector()
+          embedding: getEmbeddingZeroVector2()
         });
       }
       await this.runtime.evaluate(message, {
@@ -438,20 +810,20 @@ var ClientBase = class extends EventEmitter {
           "user.fields": "description"
         });
       });
-      elizaLogger.debug("Authenticated User's data:", user);
+      elizaLogger3.debug("Authenticated User's data:", user);
       return user.data;
     } catch (error) {
-      elizaLogger.error("Error fetching authenticated user info:", error);
+      elizaLogger3.error("Error fetching authenticated user info:", error);
       throw error;
     }
   }
   async fetchProfile() {
-    elizaLogger.info("Fetching profile of authenticated user.");
+    elizaLogger3.info("Fetching profile of authenticated user.");
     const userData = await this.getAuthenticatedUserData();
     return {
       id: userData.id,
       username: userData.username,
-      screenName: userData.name,
+      name: userData.name,
       bio: userData.description,
       nicknames: []
     };
@@ -508,10 +880,10 @@ async function validateTwitterConfig(runtime) {
         runtime.getSetting("TWITTER_DRY_RUN") || process.env.TWITTER_DRY_RUN
       ) ?? false,
       // parseBooleanFromText return null if "", map "" to false
-      TWITTER_APP_KEY: runtime.getSetting("TWITTER_APP_KEY") || process.env.TWITTER_APP_KEY || "",
-      TWITTER_APP_SECRET: runtime.getSetting("TWITTER_APP_SECRET") || process.env.TWITTER_APP_SECRET || "",
-      TWITTER_ACCESS_TOKEN: runtime.getSetting("TWITTER_ACCESS_TOKEN") || process.env.TWITTER_ACCESS_TOKEN || "",
-      TWITTER_ACCESS_SECRET: runtime.getSetting("TWITTER_ACCESS_SECRET") || process.env.TWITTER_ACCESS_SECRET || "",
+      TWITTER_APP_KEY: runtime.getSetting("TWITTER_APP_KEY") || process.env.TWITTER_APP_KEY,
+      TWITTER_APP_SECRET: runtime.getSetting("TWITTER_APP_SECRET") || process.env.TWITTER_APP_SECRET,
+      TWITTER_ACCESS_TOKEN: runtime.getSetting("TWITTER_ACCESS_TOKEN") || process.env.TWITTER_ACCESS_TOKEN,
+      TWITTER_ACCESS_SECRET: runtime.getSetting("TWITTER_ACCESS_SECRET") || process.env.TWITTER_ACCESS_SECRET,
       // number as string?
       MAX_TWEET_LENGTH: safeParseInt(
         runtime.getSetting("MAX_TWEET_LENGTH") || process.env.MAX_TWEET_LENGTH,
@@ -589,169 +961,6 @@ ${errorMessages}`
   }
 }
 
-// src/post.ts
-import {
-  TwitterV2IncludesHelper
-} from "twitter-api-v2";
-import {
-  composeContext as composeContext2,
-  generateText,
-  getEmbeddingZeroVector as getEmbeddingZeroVector4,
-  ModelClass as ModelClass2,
-  stringToUuid as stringToUuid4,
-  truncateToCompleteSentence,
-  parseJSONObjectFromText,
-  extractAttributes,
-  cleanJsonResponse
-} from "@elizaos/core";
-import { elizaLogger as elizaLogger4 } from "@elizaos/core";
-import { postActionResponseFooter } from "@elizaos/core";
-import { generateTweetActions } from "@elizaos/core";
-import { ServiceType as ServiceType2 } from "@elizaos/core";
-
-// src/utils.ts
-import { getEmbeddingZeroVector as getEmbeddingZeroVector2 } from "@elizaos/core";
-import { stringToUuid as stringToUuid2 } from "@elizaos/core";
-import { elizaLogger as elizaLogger2 } from "@elizaos/core";
-import fs from "fs";
-import path from "path";
-async function buildConversationThread(tweet, client, maxReplies = 10) {
-  const thread = [];
-  const visited = /* @__PURE__ */ new Set();
-  async function processThread(currentTweet, depth = 0) {
-    var _a;
-    elizaLogger2.debug("Processing tweet:", {
-      id: currentTweet.id,
-      inReplyToStatusId: currentTweet.inReplyToStatusId,
-      depth
-    });
-    if (!currentTweet) {
-      elizaLogger2.debug("No current tweet found for thread building");
-      return;
-    }
-    if (depth >= maxReplies) {
-      elizaLogger2.debug("Reached maximum reply depth", depth);
-      return;
-    }
-    const memory = await client.runtime.messageManager.getMemoryById(
-      stringToUuid2(currentTweet.id + "-" + client.runtime.agentId)
-    );
-    if (!memory) {
-      const roomId = stringToUuid2(
-        currentTweet.conversationId + "-" + client.runtime.agentId
-      );
-      const userId = stringToUuid2(currentTweet.userId);
-      await client.runtime.ensureConnection(
-        userId,
-        roomId,
-        currentTweet.username,
-        currentTweet.name,
-        "twitter"
-      );
-      await client.runtime.messageManager.createMemory({
-        id: stringToUuid2(
-          currentTweet.id + "-" + client.runtime.agentId
-        ),
-        agentId: client.runtime.agentId,
-        content: {
-          text: currentTweet.text,
-          source: "twitter",
-          url: currentTweet.permanentUrl,
-          imageUrls: currentTweet.photos.map((p) => p.url) || [],
-          inReplyTo: currentTweet.inReplyToStatusId ? stringToUuid2(
-            currentTweet.inReplyToStatusId + "-" + client.runtime.agentId
-          ) : void 0
-        },
-        createdAt: currentTweet.timestamp * 1e3,
-        roomId,
-        userId: currentTweet.userId === client.profile.id ? client.runtime.agentId : stringToUuid2(currentTweet.userId),
-        embedding: getEmbeddingZeroVector2()
-      });
-    }
-    if (visited.has(currentTweet.id)) {
-      elizaLogger2.debug("Already visited tweet:", currentTweet.id);
-      return;
-    }
-    visited.add(currentTweet.id);
-    thread.unshift(currentTweet);
-    elizaLogger2.debug("Current thread state:", {
-      length: thread.length,
-      currentDepth: depth,
-      tweetId: currentTweet.id
-    });
-    if (currentTweet.inReplyToStatusId) {
-      elizaLogger2.debug(
-        "Fetching parent tweet:",
-        currentTweet.inReplyToStatusId
-      );
-      try {
-        const parentTweet = await client.twitterClient.getTweet(
-          currentTweet.inReplyToStatusId
-        );
-        if (parentTweet) {
-          elizaLogger2.debug("Found parent tweet:", {
-            id: parentTweet.id,
-            text: (_a = parentTweet.text) == null ? void 0 : _a.slice(0, 50)
-          });
-          await processThread(parentTweet, depth + 1);
-        } else {
-          elizaLogger2.debug(
-            "No parent tweet found for:",
-            currentTweet.inReplyToStatusId
-          );
-        }
-      } catch (error) {
-        elizaLogger2.error("Error fetching parent tweet:", {
-          tweetId: currentTweet.inReplyToStatusId,
-          error
-        });
-      }
-    } else {
-      elizaLogger2.debug(
-        "Reached end of reply chain at:",
-        currentTweet.id
-      );
-    }
-  }
-  await processThread(tweet, 0);
-  elizaLogger2.debug("Final thread built:", {
-    totalTweets: thread.length,
-    tweetIds: thread.map((t) => {
-      var _a;
-      return {
-        id: t.id,
-        text: (_a = t.text) == null ? void 0 : _a.slice(0, 50)
-      };
-    })
-  });
-  return thread;
-}
-async function fetchMediaData(attachments) {
-  return Promise.all(
-    attachments.map(async (attachment) => {
-      if (/^(http|https):\/\//.test(attachment.url)) {
-        const response = await fetch(attachment.url);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch file: ${attachment.url}`);
-        }
-        const mediaBuffer = Buffer.from(await response.arrayBuffer());
-        const mediaType = attachment.contentType;
-        return { data: mediaBuffer, mediaType };
-      } else if (fs.existsSync(attachment.url)) {
-        const mediaBuffer = await fs.promises.readFile(
-          path.resolve(attachment.url)
-        );
-        const mediaType = attachment.contentType;
-        return { data: mediaBuffer, mediaType };
-      } else {
-        throw new Error(
-          `File not found: ${attachment.url}. Make sure the path is correct.`
-        );
-      }
-    })
-  );
-}
-
 // src/interactions.ts
 import {
   composeContext,
@@ -761,7 +970,7 @@ import {
   shouldRespondFooter,
   ModelClass,
   stringToUuid as stringToUuid3,
-  elizaLogger as elizaLogger3,
+  elizaLogger as elizaLogger4,
   getEmbeddingZeroVector as getEmbeddingZeroVector3,
   ServiceType
 } from "@elizaos/core";
@@ -804,8 +1013,329 @@ Here is the current post text again. Remember to include an action if the curren
 Here is the descriptions of images in the Current post.
 {{imageDescriptions}}
 ` + messageCompletionFooter;
+var twitterShouldRespondTemplate = (targetUsersStr) => `# INSTRUCTIONS: Determine if {{agentName}} (@{{twitterUserName}}) should respond to the message and participate in the conversation. Do not comment. Just respond with "true" or "false".
+
+Response options are RESPOND, IGNORE and STOP.
+
+PRIORITY RULE: ALWAYS RESPOND to these users regardless of topic or message content: ${targetUsersStr}. Topic relevance should be ignored for these users.
+
+For other users:
+- {{agentName}} should RESPOND to messages directed at them
+- {{agentName}} should RESPOND to conversations relevant to their background
+- {{agentName}} should IGNORE irrelevant messages
+- {{agentName}} should IGNORE very short messages unless directly addressed
+- {{agentName}} should STOP if asked to stop
+- {{agentName}} should STOP if conversation is concluded
+- {{agentName}} is in a room with other users and wants to be conversational, but not annoying.
+
+IMPORTANT:
+- {{agentName}} (aka @{{twitterUserName}}) is particularly sensitive about being annoying, so if there is any doubt, it is better to IGNORE than to RESPOND.
+- For users not in the priority list, {{agentName}} (@{{twitterUserName}}) should err on the side of IGNORE rather than RESPOND if in doubt.
+
+Recent Posts:
+{{recentPosts}}
+
+Current Post:
+{{currentPost}}
+
+Thread of Tweets You Are Replying To:
+{{formattedConversation}}
+
+# INSTRUCTIONS: Respond with [RESPOND] if {{agentName}} should respond, or [IGNORE] if {{agentName}} should not respond to the last message and [STOP] if {{agentName}} should stop participating in the conversation.
+` + shouldRespondFooter;
+var TwitterInteractionClient = class {
+  client;
+  runtime;
+  isDryRun;
+  constructor(client, runtime) {
+    this.client = client;
+    this.runtime = runtime;
+    this.isDryRun = this.client.twitterConfig.TWITTER_DRY_RUN;
+  }
+  async start() {
+    const handleTwitterInteractionsLoop = () => {
+      this.handleTwitterInteractions();
+      setTimeout(
+        handleTwitterInteractionsLoop,
+        // Defaults to 2 minutes
+        this.client.twitterConfig.TWITTER_POLL_INTERVAL * 1e3
+      );
+    };
+    handleTwitterInteractionsLoop();
+  }
+  async handleTwitterInteractions() {
+    var _a;
+    elizaLogger4.log("Checking Twitter interactions");
+    try {
+      const mentionCandidates = await this.client.requestQueue.add(async () => {
+        return await this.client.getMentions(this.client.profile.id, 10);
+      });
+      elizaLogger4.debug(`Fetched ${mentionCandidates.length} mentions`);
+      let uniqueTweetCandidates = [...mentionCandidates];
+      console.log("uniqueTweetCandidates:");
+      console.dir(uniqueTweetCandidates, { depth: null });
+      uniqueTweetCandidates.sort((a, b) => a.id.localeCompare(b.id)).filter((tweet) => tweet.userId !== this.client.profile.id);
+      for (const tweet of uniqueTweetCandidates) {
+        if (!this.client.lastCheckedTweetId || BigInt(tweet.id) > this.client.lastCheckedTweetId) {
+          const tweetId = stringToUuid3(
+            tweet.id + "-" + this.runtime.agentId
+          );
+          const existingResponse = await this.runtime.messageManager.getMemoryById(
+            tweetId
+          );
+          if (existingResponse) {
+            elizaLogger4.log(
+              `Already responded to tweet ${tweet.id}, skipping`
+            );
+            continue;
+          }
+          elizaLogger4.log("New Tweet found", tweet.permanentUrl);
+          const roomId = stringToUuid3(
+            tweet.conversationId + "-" + this.runtime.agentId
+          );
+          const userIdUUID = tweet.userId === this.client.profile.id ? this.runtime.agentId : stringToUuid3(tweet.userId);
+          await this.runtime.ensureConnection(
+            userIdUUID,
+            roomId,
+            tweet.authorUsername,
+            tweet.authorName,
+            "twitter"
+          );
+          const thread = await buildConversationThread(
+            tweet,
+            this.client
+          );
+          const message = {
+            content: {
+              text: tweet.text,
+              imageUrls: ((_a = tweet.photos) == null ? void 0 : _a.map((photo) => photo.url)) || []
+            },
+            agentId: this.runtime.agentId,
+            userId: userIdUUID,
+            roomId
+          };
+          await this.handleTweet({
+            tweet,
+            message,
+            thread
+          });
+          this.client.lastCheckedTweetId = BigInt(tweet.id);
+        }
+      }
+      await this.client.cacheLatestCheckedTweetId();
+      elizaLogger4.log("Finished checking Twitter interactions");
+    } catch (error) {
+      elizaLogger4.error("Error handling Twitter interactions:", error);
+    }
+  }
+  async handleTweet({
+    tweet,
+    message,
+    thread
+  }) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    if (tweet.authorId === this.client.profile.id && !this.client.twitterConfig.TWITTER_TARGET_USERS.includes(tweet.authorUsername)) {
+      return;
+    }
+    if (!message.content.text) {
+      elizaLogger4.log("Skipping Tweet with no text", tweet.id);
+      return { text: "", action: "IGNORE" };
+    }
+    elizaLogger4.log("Processing Tweet: ", tweet.id);
+    const formatTweet = (tweet2) => {
+      return `ID: ${tweet2.id}
+From: ${tweet2.authorName} (@${tweet2.authorUsername})
+Text: ${tweet2.text}`;
+    };
+    const currentPost = formatTweet(tweet);
+    const formattedConversation = thread.map(
+      (tweet2) => `@${tweet2.authorUsername} (${new Date(
+        tweet2.timestamp * 1e3
+      ).toLocaleString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        month: "short",
+        day: "numeric"
+      })}):
+                ${tweet2.text}`
+    ).join("\n\n");
+    const imageDescriptionsArray = [];
+    try {
+      for (const photo of tweet.photos) {
+        const description = await this.runtime.getService(
+          ServiceType.IMAGE_DESCRIPTION
+        ).describeImage(photo.url);
+        imageDescriptionsArray.push(description);
+      }
+    } catch (error) {
+      elizaLogger4.error("Error Occured during describing image: ", error);
+    }
+    let state = await this.runtime.composeState(message, {
+      twitterClient: this.client.twitterClient,
+      twitterUserName: this.client.profile.username,
+      currentPost,
+      formattedConversation,
+      imageDescriptions: imageDescriptionsArray.length > 0 ? `
+Images in Tweet:
+${imageDescriptionsArray.map((desc, i) => `Image ${i + 1}: Title: ${desc.title}
+Description: ${desc.description}`).join("\n\n")}` : ""
+    });
+    const tweetId = stringToUuid3(tweet.id + "-" + this.runtime.agentId);
+    const tweetExists = await this.runtime.messageManager.getMemoryById(tweetId);
+    if (!tweetExists) {
+      elizaLogger4.log("tweet does not exist, saving");
+      const userIdUUID = stringToUuid3(tweet.authorId);
+      const roomId = stringToUuid3(tweet.conversationId);
+      const message2 = {
+        id: tweetId,
+        agentId: this.runtime.agentId,
+        content: {
+          text: tweet.text,
+          url: tweet.permanentUrl,
+          imageUrls: ((_a = tweet.photos) == null ? void 0 : _a.map((photo) => photo.url)) || [],
+          inReplyTo: tweet.inReplyToStatusId ? stringToUuid3(
+            tweet.inReplyToStatusId + "-" + this.runtime.agentId
+          ) : void 0
+        },
+        userId: userIdUUID,
+        roomId,
+        createdAt: tweet.timestamp * 1e3
+      };
+      this.client.saveRequestMessage(message2, state);
+    }
+    const validTargetUsersStr = this.client.twitterConfig.TWITTER_TARGET_USERS.join(",");
+    const shouldRespondContext = composeContext({
+      state,
+      template: ((_b = this.runtime.character.templates) == null ? void 0 : _b.twitterShouldRespondTemplate) || ((_d = (_c = this.runtime.character) == null ? void 0 : _c.templates) == null ? void 0 : _d.shouldRespondTemplate) || twitterShouldRespondTemplate(validTargetUsersStr)
+    });
+    const shouldRespond = await generateShouldRespond({
+      runtime: this.runtime,
+      context: shouldRespondContext,
+      modelClass: ModelClass.MEDIUM
+    });
+    if (shouldRespond !== "RESPOND") {
+      elizaLogger4.log("Not responding to message");
+      return { text: "Response Decision:", action: shouldRespond };
+    }
+    const context = composeContext({
+      state: {
+        ...state,
+        // Convert actionNames array to string
+        actionNames: Array.isArray(state.actionNames) ? state.actionNames.join(", ") : state.actionNames || "",
+        actions: Array.isArray(state.actions) ? state.actions.join("\n") : state.actions || "",
+        // Ensure character examples are included
+        characterPostExamples: this.runtime.character.messageExamples ? this.runtime.character.messageExamples.map(
+          (example) => example.map(
+            (msg) => `${msg.user}: ${msg.content.text}${msg.content.action ? ` [Action: ${msg.content.action}]` : ""}`
+          ).join("\n")
+        ).join("\n\n") : ""
+      },
+      template: ((_e = this.runtime.character.templates) == null ? void 0 : _e.twitterMessageHandlerTemplate) || ((_g = (_f = this.runtime.character) == null ? void 0 : _f.templates) == null ? void 0 : _g.messageHandlerTemplate) || twitterMessageHandlerTemplate
+    });
+    const response = await generateMessageResponse({
+      runtime: this.runtime,
+      context,
+      modelClass: ModelClass.LARGE
+    });
+    const removeQuotes = (str) => str.replace(/^['"](.*)['"]$/, "$1");
+    const stringId = stringToUuid3(tweet.id + "-" + this.runtime.agentId);
+    response.inReplyTo = stringId;
+    response.text = removeQuotes(response.text);
+    if (response.text) {
+      if (this.isDryRun) {
+        elizaLogger4.info(
+          `Dry run: Selected Post: ${tweet.id} - ${tweet.username}: ${tweet.text}
+Agent's Output:
+${response.text}`
+        );
+      } else {
+        try {
+          const callback = async (response2, tweetId2) => {
+            const memories = await sendTweet(
+              this.client,
+              response2,
+              message.roomId,
+              this.client.profile.username,
+              tweetId2 || tweet.id
+            );
+            return memories;
+          };
+          const action = this.runtime.actions.find((a) => a.name === response.action);
+          const shouldSuppressInitialMessage = action == null ? void 0 : action.suppressInitialMessage;
+          let responseMessages = [];
+          if (!shouldSuppressInitialMessage) {
+            responseMessages = await callback(response);
+          } else {
+            responseMessages = [{
+              id: stringToUuid3(tweet.id + "-" + this.runtime.agentId),
+              userId: this.runtime.agentId,
+              agentId: this.runtime.agentId,
+              content: response,
+              roomId: message.roomId,
+              embedding: getEmbeddingZeroVector3(),
+              createdAt: Date.now()
+            }];
+          }
+          state = await this.runtime.updateRecentMessageState(
+            state
+          );
+          for (const responseMessage of responseMessages) {
+            if (responseMessage === responseMessages[responseMessages.length - 1]) {
+              responseMessage.content.action = response.action;
+            } else {
+              responseMessage.content.action = "CONTINUE";
+            }
+            await this.runtime.messageManager.createMemory(
+              responseMessage
+            );
+          }
+          const responseTweetId = (_i = (_h = responseMessages[responseMessages.length - 1]) == null ? void 0 : _h.content) == null ? void 0 : _i.tweetId;
+          await this.runtime.processActions(
+            message,
+            responseMessages,
+            state,
+            (response2) => {
+              return callback(response2, responseTweetId);
+            }
+          );
+          const responseInfo = `Context:
+
+${context}
+
+Selected Post: ${tweet.id} - ${tweet.username}: ${tweet.text}
+Agent's Output:
+${response.text}`;
+          await this.runtime.cacheManager.set(
+            `twitter/tweet_generation_${tweet.id}.txt`,
+            responseInfo
+          );
+          await wait();
+        } catch (error) {
+          elizaLogger4.error(`Error sending response tweet: ${error}`);
+        }
+      }
+    }
+  }
+};
 
 // src/post.ts
+import {
+  TwitterV2IncludesHelper as TwitterV2IncludesHelper3
+} from "twitter-api-v2";
+import {
+  composeContext as composeContext2,
+  generateText,
+  getEmbeddingZeroVector as getEmbeddingZeroVector4,
+  ModelClass as ModelClass2,
+  stringToUuid as stringToUuid4,
+  truncateToCompleteSentence,
+  parseJSONObjectFromText,
+  extractAttributes,
+  cleanJsonResponse
+} from "@elizaos/core";
+import { postActionResponseFooter } from "@elizaos/core";
+import { generateTweetActions } from "@elizaos/core";
+import { ServiceType as ServiceType2 } from "@elizaos/core";
 var MAX_TIMELINES_TO_FETCH = 15;
 var twitterPostTemplate = `
 # Areas of Expertise
@@ -868,35 +1398,35 @@ var TwitterPostClient = class {
     this.client = client;
     this.runtime = runtime;
     this.isDryRun = this.client.twitterConfig.TWITTER_DRY_RUN;
-    elizaLogger4.log("Twitter Client Configuration:");
-    elizaLogger4.log(`- Username: ${(_a = this.client.profile) == null ? void 0 : _a.username}`);
-    elizaLogger4.log(
+    elizaLogger.log("Twitter Client Configuration:");
+    elizaLogger.log(`- Username: ${(_a = this.client.profile) == null ? void 0 : _a.username}`);
+    elizaLogger.log(
       `- Dry Run Mode: ${this.isDryRun ? "enabled" : "disabled"}`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Enable Post: ${this.client.twitterConfig.ENABLE_TWITTER_POST_GENERATION ? "enabled" : "disabled"}`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Post Interval: ${this.client.twitterConfig.POST_INTERVAL_MIN}-${this.client.twitterConfig.POST_INTERVAL_MAX} minutes`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Action Processing: ${this.client.twitterConfig.ENABLE_ACTION_PROCESSING ? "enabled" : "disabled"}`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Action Interval: ${this.client.twitterConfig.ACTION_INTERVAL} minutes`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Post Immediately: ${this.client.twitterConfig.POST_IMMEDIATELY ? "enabled" : "disabled"}`
     );
-    elizaLogger4.log(
+    elizaLogger.log(
       `- Search Enabled: ${this.client.twitterConfig.TWITTER_SEARCH_ENABLE ? "enabled" : "disabled"}`
     );
     const targetUsers = this.client.twitterConfig.TWITTER_TARGET_USERS;
     if (targetUsers) {
-      elizaLogger4.log(`- Target Users: ${targetUsers}`);
+      elizaLogger.log(`- Target Users: ${targetUsers}`);
     }
     if (this.isDryRun) {
-      elizaLogger4.log(
+      elizaLogger.log(
         "Twitter client initialized in dry run mode - no actual tweets should be posted"
       );
     }
@@ -940,26 +1470,26 @@ var TwitterPostClient = class {
     const generateNewTweetLoop = async () => {
       const lastPost = await this.runtime.cacheManager.get("twitter/" + this.client.profile.username + "/lastPost");
       const lastPostTimestamp = (lastPost == null ? void 0 : lastPost.timestamp) ?? 0;
-      elizaLogger4.debug(`Last post timestamp: ${lastPostTimestamp}`);
+      elizaLogger.debug(`Last post timestamp: ${lastPostTimestamp}`);
       const minMinutes = this.client.twitterConfig.POST_INTERVAL_MIN;
       const maxMinutes = this.client.twitterConfig.POST_INTERVAL_MAX;
       const randomMinutes = Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
       const delay = randomMinutes * 60 * 1e3;
       const timeSinceLastPost = Date.now() - new Date(lastPostTimestamp).getTime();
       if (timeSinceLastPost >= delay) {
-        elizaLogger4.debug(`Time since last post: ${timeSinceLastPost}ms, generating new tweet`);
+        elizaLogger.debug(`Time since last post: ${timeSinceLastPost}ms, generating new tweet`);
         await this.generateNewTweet();
         setTimeout(() => {
           generateNewTweetLoop();
         }, randomMinutes * 60 * 1e3);
       } else {
         const remainingDelay = delay - timeSinceLastPost;
-        elizaLogger4.debug(`Time since last post: ${timeSinceLastPost}ms, next check in ${remainingDelay}ms`);
+        elizaLogger.debug(`Time since last post: ${timeSinceLastPost}ms, next check in ${remainingDelay}ms`);
         setTimeout(() => {
           generateNewTweetLoop();
         }, remainingDelay);
       }
-      elizaLogger4.log(`Next tweet scheduled in ${randomMinutes} minutes`);
+      elizaLogger.log(`Next tweet scheduled in ${randomMinutes} minutes`);
     };
     const processActionsLoop = async () => {
       const actionInterval = this.client.twitterConfig.ACTION_INTERVAL;
@@ -967,8 +1497,8 @@ var TwitterPostClient = class {
         try {
           const results = await this.processTweetActions();
           if (results) {
-            elizaLogger4.log(`Processed ${results.length} tweets`);
-            elizaLogger4.log(
+            elizaLogger.log(`Processed ${results.length} tweets`);
+            elizaLogger.log(
               `Next action processing scheduled in ${actionInterval} minutes`
             );
             await new Promise(
@@ -977,7 +1507,7 @@ var TwitterPostClient = class {
             );
           }
         } catch (error) {
-          elizaLogger4.error(
+          elizaLogger.error(
             "Error in action processing loop:",
             error
           );
@@ -990,15 +1520,7 @@ var TwitterPostClient = class {
     }
     if (this.client.twitterConfig.ENABLE_TWITTER_POST_GENERATION) {
       generateNewTweetLoop();
-      elizaLogger4.log("Tweet generation loop started");
-    }
-    if (this.client.twitterConfig.ENABLE_ACTION_PROCESSING) {
-      processActionsLoop().catch((error) => {
-        elizaLogger4.error(
-          "Fatal error in process actions loop:",
-          error
-        );
-      });
+      elizaLogger.log("Tweet generation loop started");
     }
   }
   // private runPendingTweetCheckLoop() {
@@ -1008,11 +1530,9 @@ var TwitterPostClient = class {
   // }
   createTweetObject(fetchedTweetResult, twitterUsername) {
     var _a, _b, _c, _d;
-    const includes = new TwitterV2IncludesHelper(fetchedTweetResult);
+    const includes = new TwitterV2IncludesHelper3(fetchedTweetResult);
     const author = includes.author(fetchedTweetResult.data);
     const tweetRepliedTo = includes.repliedTo(fetchedTweetResult.data);
-    elizaLogger4.debug("author:\n" + JSON.stringify(author, null, 2));
-    elizaLogger4.debug("tweetRepliedTo:\n" + JSON.stringify(tweetRepliedTo, null, 2));
     const tweet = {
       id: author.id,
       name: author.name,
@@ -1031,7 +1551,6 @@ var TwitterPostClient = class {
       urls: [],
       videos: []
     };
-    elizaLogger4.debug("tweet:\n" + JSON.stringify(tweet, null, 2));
     return tweet;
   }
   async processAndCacheTweet(runtime, client, tweet, roomId, rawTweetContent) {
@@ -1043,7 +1562,7 @@ var TwitterPostClient = class {
       }
     );
     await client.cacheTweet(tweet);
-    elizaLogger4.log(`Tweet posted:
+    elizaLogger.log(`Tweet posted:
  ${tweet.permanentUrl}`);
     await runtime.ensureRoomExists(roomId);
     await runtime.ensureParticipantInRoom(runtime.agentId, roomId);
@@ -1099,18 +1618,18 @@ var TwitterPostClient = class {
         }
       );
       if (!standardTweetResult.data) {
-        elizaLogger4.error("Error sending tweet; Bad response:", standardTweetResult);
+        elizaLogger.error("Error sending tweet; Bad response:", standardTweetResult);
         return;
       }
       return standardTweetResult.data;
     } catch (error) {
-      elizaLogger4.error("Error sending standard Tweet:", error);
+      elizaLogger.error("Error sending standard Tweet:", error);
       throw error;
     }
   }
   async postTweet(runtime, client, tweetTextForPosting, roomId, rawTweetContent, twitterUsername, mediaData) {
     try {
-      elizaLogger4.log(`Posting new tweet:
+      elizaLogger.log(`Posting new tweet:
 `);
       let result;
       if (tweetTextForPosting.length > DEFAULT_MAX_TWEET_LENGTH) {
@@ -1134,7 +1653,6 @@ var TwitterPostClient = class {
           "expansions": "author_id,referenced_tweets.id"
         })
       );
-      elizaLogger4.debug("fetchedTweet:\n" + JSON.stringify(fetchedTweet, null, 2));
       const tweet = this.createTweetObject(
         fetchedTweet,
         twitterUsername
@@ -1148,7 +1666,7 @@ var TwitterPostClient = class {
       );
     } catch (error) {
       console.error(error);
-      elizaLogger4.error("Error sending tweet:", error);
+      elizaLogger.error("Error sending tweet:", error);
     }
   }
   /**
@@ -1156,7 +1674,7 @@ var TwitterPostClient = class {
    */
   async generateNewTweet() {
     var _a;
-    elizaLogger4.log("Generating new tweet");
+    elizaLogger.log("Generating new tweet");
     try {
       const roomId = stringToUuid4(
         "twitter_generate_room-" + this.client.profile.username
@@ -1188,7 +1706,7 @@ var TwitterPostClient = class {
         state,
         template: ((_a = this.runtime.character.templates) == null ? void 0 : _a.twitterPostTemplate) || twitterPostTemplate
       });
-      elizaLogger4.debug("generate post prompt:\n" + context);
+      elizaLogger.debug("generate post prompt:\n" + context);
       const response = await generateText({
         runtime: this.runtime,
         context,
@@ -1232,20 +1750,20 @@ var TwitterPostClient = class {
         fixNewLines(tweetTextForPosting)
       );
       if (this.isDryRun) {
-        elizaLogger4.info(
+        elizaLogger.info(
           `Dry run: would have posted tweet: ${tweetTextForPosting}`
         );
         return;
       }
       try {
         if (this.approvalRequired) {
-          elizaLogger4.log(
+          elizaLogger.log(
             `Sending Tweet For Approval:
  ${tweetTextForPosting}`
           );
-          elizaLogger4.log("Tweet sent for approval");
+          elizaLogger.log("Tweet sent for approval");
         } else {
-          elizaLogger4.log(
+          elizaLogger.log(
             `Posting new tweet:
  ${tweetTextForPosting}`
           );
@@ -1260,10 +1778,10 @@ var TwitterPostClient = class {
           );
         }
       } catch (error) {
-        elizaLogger4.error("Error sending tweet:", error);
+        elizaLogger.error("Error sending tweet:", error);
       }
     } catch (error) {
-      elizaLogger4.error("Error generating new tweet:", error);
+      elizaLogger.error("Error generating new tweet:", error);
     }
   }
   async generateTweetContent(tweetState, options) {
@@ -1277,7 +1795,7 @@ var TwitterPostClient = class {
       context: (options == null ? void 0 : options.context) || context,
       modelClass: ModelClass2.SMALL
     });
-    elizaLogger4.log("generate tweet content response:\n" + response);
+    elizaLogger.log("generate tweet content response:\n" + response);
     const cleanedResponse = cleanJsonResponse(response);
     const jsonResponse = parseJSONObjectFromText(cleanedResponse);
     if (jsonResponse.text) {
@@ -1320,13 +1838,13 @@ var TwitterPostClient = class {
   async processTweetActions() {
     var _a;
     if (this.isProcessing) {
-      elizaLogger4.log("Already processing tweet actions, skipping");
+      elizaLogger.log("Already processing tweet actions, skipping");
       return null;
     }
     try {
       this.isProcessing = true;
       this.lastProcessTime = Date.now();
-      elizaLogger4.log("Processing tweet actions");
+      elizaLogger.log("Processing tweet actions");
       await this.runtime.ensureUserExists(
         this.runtime.agentId,
         this.client.profile.username,
@@ -1344,7 +1862,7 @@ var TwitterPostClient = class {
             stringToUuid4(tweet.id + "-" + this.runtime.agentId)
           );
           if (memory) {
-            elizaLogger4.log(
+            elizaLogger.log(
               `Already processed tweet ID: ${tweet.id}`
             );
             continue;
@@ -1376,7 +1894,7 @@ Text: ${tweet.text}`
             modelClass: ModelClass2.SMALL
           });
           if (!actionResponse) {
-            elizaLogger4.log(
+            elizaLogger.log(
               `No valid actions generated for tweet ${tweet.id}`
             );
             continue;
@@ -1388,7 +1906,7 @@ Text: ${tweet.text}`
             roomId
           });
         } catch (error) {
-          elizaLogger4.error(
+          elizaLogger.error(
             `Error processing tweet ${tweet.id}:`,
             error
           );
@@ -1414,7 +1932,7 @@ Text: ${tweet.text}`
       ).slice(0, maxActionsProcessing);
       return this.processTimelineActions(sortedTimelines);
     } catch (error) {
-      elizaLogger4.error("Error in processTweetActions:", error);
+      elizaLogger.error("Error in processTweetActions:", error);
       throw error;
     } finally {
       this.isProcessing = false;
@@ -1437,7 +1955,7 @@ Text: ${tweet.text}`
         const executedActions = [];
         if (actionResponse.like) {
           if (this.isDryRun) {
-            elizaLogger4.info(
+            elizaLogger.info(
               `Dry run: would have liked tweet ${tweet.id}`
             );
             executedActions.push("like (dry run)");
@@ -1445,9 +1963,9 @@ Text: ${tweet.text}`
             try {
               await this.client.twitterClient.likeTweet(tweet.id);
               executedActions.push("like");
-              elizaLogger4.log(`Liked tweet ${tweet.id}`);
+              elizaLogger.log(`Liked tweet ${tweet.id}`);
             } catch (error) {
-              elizaLogger4.error(
+              elizaLogger.error(
                 `Error liking tweet ${tweet.id}:`,
                 error
               );
@@ -1456,7 +1974,7 @@ Text: ${tweet.text}`
         }
         if (actionResponse.retweet) {
           if (this.isDryRun) {
-            elizaLogger4.info(
+            elizaLogger.info(
               `Dry run: would have retweeted tweet ${tweet.id}`
             );
             executedActions.push("retweet (dry run)");
@@ -1464,9 +1982,9 @@ Text: ${tweet.text}`
             try {
               await this.client.twitterClient.retweet(tweet.id);
               executedActions.push("retweet");
-              elizaLogger4.log(`Retweeted tweet ${tweet.id}`);
+              elizaLogger.log(`Retweeted tweet ${tweet.id}`);
             } catch (error) {
-              elizaLogger4.error(
+              elizaLogger.error(
                 `Error retweeting tweet ${tweet.id}:`,
                 error
               );
@@ -1486,7 +2004,7 @@ Text: ${tweet.text}`
             ).join("\n\n");
             const imageDescriptions = [];
             if (((_a = tweet.photos) == null ? void 0 : _a.length) > 0) {
-              elizaLogger4.log(
+              elizaLogger.log(
                 "Processing images in tweet for context"
               );
               for (const photo of tweet.photos) {
@@ -1508,7 +2026,7 @@ Quoted Tweet from @${quotedTweet.username}:
 ${quotedTweet.text}`;
                 }
               } catch (error) {
-                elizaLogger4.error(
+                elizaLogger.error(
                   "Error fetching quoted tweet:",
                   error
                 );
@@ -1545,17 +2063,17 @@ ${imageDescriptions.map(
               }
             );
             if (!quoteContent) {
-              elizaLogger4.error(
+              elizaLogger.error(
                 "Failed to generate valid quote tweet content"
               );
               return;
             }
-            elizaLogger4.log(
+            elizaLogger.log(
               "Generated quote tweet content:",
               quoteContent
             );
             if (this.isDryRun) {
-              elizaLogger4.info(
+              elizaLogger.info(
                 `Dry run: A quote tweet for tweet ID ${tweet.id} would have been posted with the following content: "${quoteContent}".`
               );
               executedActions.push("quote (dry run)");
@@ -1568,7 +2086,7 @@ ${imageDescriptions.map(
               );
               const body = await result.json();
               if ((_e = (_d = (_c = body == null ? void 0 : body.data) == null ? void 0 : _c.create_tweet) == null ? void 0 : _d.tweet_results) == null ? void 0 : _e.result) {
-                elizaLogger4.log(
+                elizaLogger.log(
                   "Successfully posted quote tweet"
                 );
                 executedActions.push("quote");
@@ -1581,14 +2099,14 @@ Generated Quote:
 ${quoteContent}`
                 );
               } else {
-                elizaLogger4.error(
+                elizaLogger.error(
                   "Quote tweet creation failed:",
                   body
                 );
               }
             }
           } catch (error) {
-            elizaLogger4.error(
+            elizaLogger.error(
               "Error in quote tweet generation:",
               error
             );
@@ -1602,7 +2120,7 @@ ${quoteContent}`
               executedActions
             );
           } catch (error) {
-            elizaLogger4.error(
+            elizaLogger.error(
               `Error replying to tweet ${tweet.id}:`,
               error
             );
@@ -1641,7 +2159,7 @@ ${quoteContent}`
           executedActions
         });
       } catch (error) {
-        elizaLogger4.error(`Error processing tweet ${tweet.id}:`, error);
+        elizaLogger.error(`Error processing tweet ${tweet.id}:`, error);
         continue;
       }
     }
@@ -1662,7 +2180,7 @@ ${quoteContent}`
       ).join("\n\n");
       const imageDescriptions = [];
       if (((_a = tweet.photos) == null ? void 0 : _a.length) > 0) {
-        elizaLogger4.log("Processing images in tweet for context");
+        elizaLogger.log("Processing images in tweet for context");
         for (const photo of tweet.photos) {
           const description = await this.runtime.getService(
             ServiceType2.IMAGE_DESCRIPTION
@@ -1682,7 +2200,7 @@ Quoted Tweet from @${quotedTweet.username}:
 ${quotedTweet.text}`;
           }
         } catch (error) {
-          elizaLogger4.error("Error fetching quoted tweet:", error);
+          elizaLogger.error("Error fetching quoted tweet:", error);
         }
       }
       const enrichedState = await this.runtime.composeState(
@@ -1708,17 +2226,17 @@ ${imageDescriptions.map((desc, i) => `Image ${i + 1}: ${desc}`).join("\n")}` : "
         template: ((_b = this.runtime.character.templates) == null ? void 0 : _b.twitterMessageHandlerTemplate) || twitterMessageHandlerTemplate
       });
       if (!replyText) {
-        elizaLogger4.error("Failed to generate valid reply content");
+        elizaLogger.error("Failed to generate valid reply content");
         return;
       }
       if (this.isDryRun) {
-        elizaLogger4.info(
+        elizaLogger.info(
           `Dry run: reply to tweet ${tweet.id} would have been: ${replyText}`
         );
         executedActions.push("reply (dry run)");
         return;
       }
-      elizaLogger4.debug("Final reply text to be sent:", replyText);
+      elizaLogger.debug("Final reply text to be sent:", replyText);
       let result;
       if (replyText.length > DEFAULT_MAX_TWEET_LENGTH) {
         result = await this.handleNoteTweet(
@@ -1734,7 +2252,7 @@ ${imageDescriptions.map((desc, i) => `Image ${i + 1}: ${desc}`).join("\n")}` : "
         );
       }
       if (result) {
-        elizaLogger4.log("Successfully posted reply tweet");
+        elizaLogger.log("Successfully posted reply tweet");
         executedActions.push("reply");
         await this.runtime.cacheManager.set(
           `twitter/reply_generation_${tweet.id}.txt`,
@@ -1745,10 +2263,10 @@ Generated Reply:
 ${replyText}`
         );
       } else {
-        elizaLogger4.error("Tweet reply creation failed");
+        elizaLogger.error("Tweet reply creation failed");
       }
     } catch (error) {
-      elizaLogger4.error("Error in handleTextOnlyReply:", error);
+      elizaLogger.error("Error in handleTextOnlyReply:", error);
     }
   }
   async stop() {
@@ -1879,7 +2397,7 @@ ${replyText}`
     }
   }
   async handlePendingTweet() {
-    elizaLogger4.log("Checking Pending Tweets...");
+    elizaLogger.log("Checking Pending Tweets...");
     const pendingTweetsKey = `twitter/${this.client.profile.username}/pendingTweet`;
     const pendingTweets = await this.runtime.cacheManager.get(
       pendingTweetsKey
@@ -1887,10 +2405,10 @@ ${replyText}`
     for (const pendingTweet of pendingTweets) {
       const isExpired = Date.now() - pendingTweet.timestamp > 24 * 60 * 60 * 1e3;
       if (isExpired) {
-        elizaLogger4.log("Pending tweet expired, cleaning up");
+        elizaLogger.log("Pending tweet expired, cleaning up");
         return;
       }
-      elizaLogger4.log("Checking approval status...");
+      elizaLogger.log("Checking approval status...");
     }
   }
 };
@@ -1900,7 +2418,7 @@ var TwitterManager = class {
   client;
   post;
   // search: TwitterSearchClient;
-  // interaction: TwitterInteractionClient;
+  interaction;
   // space?: TwitterSpaceClient;
   constructor(runtime, twitterConfig) {
     this.client = new ClientBase(runtime, twitterConfig);
@@ -1912,6 +2430,7 @@ var TwitterManager = class {
       elizaLogger5.warn("3. can get your account banned");
       elizaLogger5.warn("use at your own risk");
     }
+    this.interaction = new TwitterInteractionClient(this.client, runtime);
     if (twitterConfig.TWITTER_SPACES_ENABLE) {
     }
   }
@@ -1921,15 +2440,13 @@ var TwitterManager = class {
 };
 var TwitterClientInterface = {
   name: "twitter",
-  description: "Twitter client",
   async start(runtime) {
     const twitterConfig = await validateTwitterConfig(runtime);
     elizaLogger5.log("Twitter client started");
     const manager = new TwitterManager(runtime, twitterConfig);
-    elizaLogger5.info("Calling manager.client.init()");
     await manager.client.init();
-    elizaLogger5.info("manager.client.init() completed");
     await manager.post.start();
+    await manager.interaction.start();
     return manager;
   }
 };

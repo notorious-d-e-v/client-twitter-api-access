@@ -7,7 +7,9 @@ import { elizaLogger } from "@elizaos/core";
 import type { Media } from "@elizaos/core";
 import fs from "fs";
 import path from "path";
-import { MediaData } from "./types";
+import { ElizaTweet, MediaData } from "./types";
+import { TweetV2 } from "twitter-api-v2";
+import { TwitterV2IncludesHelper } from "twitter-api-v2";
 
 export const wait = (minTime = 1000, maxTime = 3000) => {
     const waitTime =
@@ -31,14 +33,14 @@ export const isValidTweet = (tweet: Tweet): boolean => {
 };
 
 export async function buildConversationThread(
-    tweet: Tweet,
+    tweet: ElizaTweet,
     client: ClientBase,
     maxReplies = 10
-): Promise<Tweet[]> {
-    const thread: Tweet[] = [];
+): Promise<ElizaTweet[]> {
+    const thread: ElizaTweet[] = [];
     const visited: Set<string> = new Set();
 
-    async function processThread(currentTweet: Tweet, depth = 0) {
+    async function processThread(currentTweet: ElizaTweet, depth = 0) {
         elizaLogger.debug("Processing tweet:", {
             id: currentTweet.id,
             inReplyToStatusId: currentTweet.inReplyToStatusId,
@@ -64,13 +66,13 @@ export async function buildConversationThread(
             const roomId = stringToUuid(
                 currentTweet.conversationId + "-" + client.runtime.agentId
             );
-            const userId = stringToUuid(currentTweet.userId);
+            const userId = stringToUuid(currentTweet.authorId);
 
             await client.runtime.ensureConnection(
                 userId,
                 roomId,
-                currentTweet.username,
-                currentTweet.name,
+                currentTweet.authorUsername,
+                currentTweet.authorName,
                 "twitter"
             );
 
@@ -95,9 +97,9 @@ export async function buildConversationThread(
                 createdAt: currentTweet.timestamp * 1000,
                 roomId,
                 userId:
-                    currentTweet.userId === client.profile.id
+                    currentTweet.authorId === client.profile.id
                         ? client.runtime.agentId
-                        : stringToUuid(currentTweet.userId),
+                        : stringToUuid(currentTweet.authorId),
                 embedding: getEmbeddingZeroVector(),
             });
         }
@@ -123,9 +125,13 @@ export async function buildConversationThread(
                 currentTweet.inReplyToStatusId
             );
             try {
-                const parentTweet = await client.twitterClient.getTweet(
-                    currentTweet.inReplyToStatusId
-                );
+                const parentTweetResult = await client.requestQueue.add(async () => {
+                    return await client.twitterClient.v2.singleTweet(currentTweet.inReplyToStatusId, {
+                        "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+                        "expansions": "author_id,referenced_tweets.id"
+                    })
+                });
+                const parentTweet = createElizaTweet(parentTweetResult.data, new TwitterV2IncludesHelper(parentTweetResult));
 
                 if (parentTweet) {
                     elizaLogger.debug("Found parent tweet:", {
@@ -460,4 +466,32 @@ function splitParagraph(paragraph: string, maxLength: number): string[] {
     const restoredChunks = restoreUrls(splittedChunks, placeholderMap);
 
     return restoredChunks;
+}
+
+export function createElizaTweet(fetchedTweetResult: TweetV2, includes: TwitterV2IncludesHelper): ElizaTweet {
+    if (!fetchedTweetResult) {
+        return null;
+    }
+
+    const author = includes.author(fetchedTweetResult);
+    const tweetRepliedTo = includes.repliedTo(fetchedTweetResult);
+
+    const tweet: ElizaTweet = {
+        id: fetchedTweetResult.id,
+        text: fetchedTweetResult.text,
+        conversationId: fetchedTweetResult.conversation_id,
+        timestamp: fetchedTweetResult.created_at ? new Date(fetchedTweetResult.created_at).getTime() : null,
+        authorName: author.name,
+        authorUsername: author.username,
+        photos: [],
+        thread: [],
+        videos: [],
+        mentions: [],
+        permanentUrl: `https://x.com/${author.username}/status/${fetchedTweetResult.data.id}`,
+        inReplyToStatusId: tweetRepliedTo?.id,
+        isReply: !!tweetRepliedTo,
+        isRetweet: false,
+    }
+    
+    return tweet;
 }

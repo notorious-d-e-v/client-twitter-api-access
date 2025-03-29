@@ -311,14 +311,14 @@ export class TwitterPostClient {
             elizaLogger.log("Tweet generation loop started");
         }
 
-        if (this.client.twitterConfig.ENABLE_ACTION_PROCESSING) {
-            processActionsLoop().catch((error) => {
-                elizaLogger.error(
-                    "Fatal error in process actions loop:",
-                    error
-                );
-            });
-        }
+        // if (this.client.twitterConfig.ENABLE_ACTION_PROCESSING) {
+        //     processActionsLoop().catch((error) => {
+        //         elizaLogger.error(
+        //             "Fatal error in process actions loop:",
+        //             error
+        //         );
+        //     });
+        // }
 
         // Start the pending tweet check loop if enabled
         // if (this.approvalRequired) this.runPendingTweetCheckLoop();

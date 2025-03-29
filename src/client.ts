@@ -18,7 +18,7 @@ class TwitterManager {
     client: ClientBase;
     post: TwitterPostClient;
     // search: TwitterSearchClient;
-    // interaction: TwitterInteractionClient;
+    interaction: TwitterInteractionClient;
     // space?: TwitterSpaceClient;
 
     constructor(runtime: IAgentRuntime, twitterConfig: TwitterConfig) {
@@ -39,7 +39,7 @@ class TwitterManager {
         }
 
         // Mentions and interactions
-        // this.interaction = new TwitterInteractionClient(this.client, runtime);
+        this.interaction = new TwitterInteractionClient(this.client, runtime);
 
         // Optional Spaces logic (enabled if TWITTER_SPACES_ENABLE is true)
         if (twitterConfig.TWITTER_SPACES_ENABLE) {
@@ -54,7 +54,6 @@ class TwitterManager {
 
 export const TwitterClientInterface: Client = {
     name: 'twitter',
-    description: 'Twitter client',
     async start(runtime: IAgentRuntime) {
         const twitterConfig: TwitterConfig =
             await validateTwitterConfig(runtime);
@@ -74,8 +73,8 @@ export const TwitterClientInterface: Client = {
         //     await manager.search.start();
         // }
 
-        // // Start interactions (mentions, replies)
-        // await manager.interaction.start();
+        // Start interactions (mentions, replies)
+        await manager.interaction.start();
 
         // // If Spaces are enabled, start the periodic check
         // if (manager.space) {
