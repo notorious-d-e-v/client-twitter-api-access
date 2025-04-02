@@ -18,6 +18,7 @@ import {
     parseJSONObjectFromText,
     extractAttributes,
     cleanJsonResponse,
+    elizaLogger,
 } from "@elizaos/core";
 import { postActionResponseFooter } from "@elizaos/core";
 import { generateTweetActions } from "@elizaos/core";

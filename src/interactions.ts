@@ -121,9 +121,7 @@ export class TwitterInteractionClient {
 
         try {
             // Check for mentions
-            const mentionCandidates: ElizaTweet[] = await this.client.requestQueue.add(async () => {
-                return await this.client.getMentions(this.client.profile.id, 10);
-            });
+            const mentionCandidates: ElizaTweet[] = await this.client.getMentions(this.client.profile.id, 10);
 
             elizaLogger.debug(`Fetched ${mentionCandidates.length} mentions`);
             let uniqueTweetCandidates = [...mentionCandidates];
@@ -214,7 +212,7 @@ export class TwitterInteractionClient {
             // Sort tweet candidates by ID in ascending order
             uniqueTweetCandidates
                 .sort((a, b) => a.id.localeCompare(b.id))
-                .filter((tweet) => tweet.userId !== this.client.profile.id);
+                .filter((tweet) => tweet.authorId !== this.client.profile.id);
 
             // for each tweet candidate, handle the tweet
             for (const tweet of uniqueTweetCandidates) {
@@ -222,33 +220,28 @@ export class TwitterInteractionClient {
                     !this.client.lastCheckedTweetId ||
                     BigInt(tweet.id) > this.client.lastCheckedTweetId
                 ) {
+
                     // Generate the tweetId UUID the same way it's done in handleTweet
-                    const tweetId = stringToUuid(
-                        tweet.id + "-" + this.runtime.agentId
-                    );
+                    const tweetId = stringToUuid(`${tweet.id}-${this.runtime.agentId}`);
 
                     // Check if we've already processed this tweet
                     const existingResponse =
                         await this.runtime.messageManager.getMemoryById(
                             tweetId
                         );
-
                     if (existingResponse) {
                         elizaLogger.log(
                             `Already responded to tweet ${tweet.id}, skipping`
                         );
                         continue;
                     }
-                    elizaLogger.log("New Tweet found", tweet.permanentUrl);
 
-                    const roomId = stringToUuid(
-                        tweet.conversationId + "-" + this.runtime.agentId
-                    );
+                    const roomId = stringToUuid(`${tweet.conversationId}-${this.runtime.agentId}`);
 
                     const userIdUUID =
-                        tweet.userId === this.client.profile.id
+                        tweet.authorId === this.client.profile.id
                             ? this.runtime.agentId
-                            : stringToUuid(tweet.userId!);
+                            : stringToUuid(tweet.authorId!);
 
                     await this.runtime.ensureConnection(
                         userIdUUID,
@@ -289,6 +282,7 @@ export class TwitterInteractionClient {
 
             elizaLogger.log("Finished checking Twitter interactions");
         } catch (error) {
+            console.error(error);
             elizaLogger.error("Error handling Twitter interactions:", error);
         }
     }
@@ -462,7 +456,7 @@ export class TwitterInteractionClient {
         if (response.text) {
             if (this.isDryRun) {
                 elizaLogger.info(
-                    `Dry run: Selected Post: ${tweet.id} - ${tweet.username}: ${tweet.text}\nAgent's Output:\n${response.text}`
+                    `Dry run: Selected Post: ${tweet.id} - ${tweet.authorUsername}: ${tweet.text}\nAgent's Output:\n${response.text}`
                 );
             } else {
                 try {
@@ -530,7 +524,7 @@ export class TwitterInteractionClient {
                         }
                     );
 
-                    const responseInfo = `Context:\n\n${context}\n\nSelected Post: ${tweet.id} - ${tweet.username}: ${tweet.text}\nAgent's Output:\n${response.text}`;
+                    const responseInfo = `Context:\n\n${context}\n\nSelected Post: ${tweet.id} - @${tweet.authorUsername}: ${tweet.text}\nAgent's Output:\n${response.text}`;
 
                     await this.runtime.cacheManager.set(
                         `twitter/tweet_generation_${tweet.id}.txt`,

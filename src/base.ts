@@ -312,12 +312,31 @@ export class ClientBase extends EventEmitter {
         }
     }
 
-    async getMentions(userId: string, count: number): Promise<ElizaTweet[]> {
+    async getMentions(
+        userId: string,
+        count: number,
+        options?: {
+            "tweet.fields"?: string[];
+            "expansions"?: string[];
+        }
+    ): Promise<ElizaTweet[]> {
         elizaLogger.debug("fetching mentions");
-        const mentions = await this.twitterClient.v2.userMentionTimeline(userId, {
-            max_results: count,
-            "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
-            "expansions": "author_id,referenced_tweets.id"
+
+        // default options
+        const defaultFields = ["created_at", "author_id", "conversation_id", "entities", "referenced_tweets", "text"];
+        const defaultExpansions = ["author_id"];
+
+        // select options or defaults
+        const tweetFields = options?.["tweet.fields"] || defaultFields;
+        const expansions = options?.["expansions"] || defaultExpansions;
+
+        // fetch mentions
+        const mentions = await this.requestQueue.add(async () => {
+            return await this.twitterClient.v2.userMentionTimeline(userId, {
+                max_results: count,
+                "tweet.fields": tweetFields.join(","),
+                "expansions": expansions.join(",")
+            });
         });
         
         return mentions.tweets.map((tweet) => createElizaTweet(tweet, mentions.includes));
