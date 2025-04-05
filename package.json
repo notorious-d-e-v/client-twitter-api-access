@@ -20,6 +20,7 @@
   ],
   "dependencies": {
     "@elizaos/core": "^0.25.9",
+    "discord.js": "^14.16.3",
     "twitter-api-v2": "^1.22.0",
     "typescript": "^5.8.2",
     "zod": "^3.24.2"

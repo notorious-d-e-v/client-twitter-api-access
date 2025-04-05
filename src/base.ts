@@ -642,13 +642,13 @@ export class ClientBase extends EventEmitter {
         }
     }
 
-    async getCachedTimeline(): Promise<Tweet[] | undefined> {
-        return await this.runtime.cacheManager.get<Tweet[]>(
+    async getCachedTimeline(): Promise<ElizaTweet[] | undefined> {
+        return await this.runtime.cacheManager.get<ElizaTweet[]>(
             `twitter/${this.profile.username}/timeline`
         );
     }
 
-    async cacheTimeline(timeline: Tweet[]) {
+    async cacheTimeline(timeline: ElizaTweet[]) {
         await this.runtime.cacheManager.set(
             `twitter/${this.profile.username}/timeline`,
             timeline,
@@ -656,7 +656,7 @@ export class ClientBase extends EventEmitter {
         );
     }
 
-    async cacheMentions(mentions: Tweet[]) {
+    async cacheMentions(mentions: ElizaTweet[]) {
         await this.runtime.cacheManager.set(
             `twitter/${this.profile.username}/mentions`,
             mentions,

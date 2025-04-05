@@ -128,7 +128,7 @@ export class TwitterInteractionClient {
             console.log("uniqueTweetCandidates:");
             console.dir(uniqueTweetCandidates, { depth: null });
 
-            // Only process target users if configured
+            // TODO: #TWITTER-V2-005 - Reimplement target users filtering using Twitter API v2
             // const TARGET_USERS = this.client.twitterConfig.TWITTER_TARGET_USERS;            
             // if (TARGET_USERS && TARGET_USERS.length > 0) {
             //     elizaLogger.debug("Processing target users:", TARGET_USERS);

@@ -1,4 +1,4 @@
-import { MediaObjectV2,UserV2 } from "twitter-api-v2";
+import { MediaObjectV2,UserV2, TweetV2 } from "twitter-api-v2";
 
 export interface TwitterProfile extends UserV2 {
     bio?: string;
@@ -13,8 +13,9 @@ export type MediaData = {
 /**
  * A TweetV2 with useful metadata for Eliza usecases.
  */
-export interface ElizaTweet {
-    id?: string;
+// TODO: #TWITTER-V2-008 - Refactor ElizaTweet type to become TweetV2 from Twitter API v2
+export interface ElizaTweet extends TweetV2 {
+    id: string;
     conversationId?: string;
     authorId?: string;
     authorUsername?: string;
@@ -25,7 +26,7 @@ export interface ElizaTweet {
     mentions?: UserV2[];
     permanentUrl?: string;
     photos: Photo[];
-    text?: string;
+    text: string;
     thread: ElizaTweet[];
     timestamp?: number;
     videos: Video[];
