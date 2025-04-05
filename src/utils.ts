@@ -7,7 +7,9 @@ import { elizaLogger } from "@elizaos/core";
 import type { Media } from "@elizaos/core";
 import fs from "fs";
 import path from "path";
-import { MediaData } from "./types";
+import { ElizaTweet, MediaData } from "./types";
+import { SendTweetV2Params, TweetV2 } from "twitter-api-v2";
+import { TwitterV2IncludesHelper } from "twitter-api-v2";
 
 export const wait = (minTime = 1000, maxTime = 3000) => {
     const waitTime =
@@ -31,14 +33,14 @@ export const isValidTweet = (tweet: Tweet): boolean => {
 };
 
 export async function buildConversationThread(
-    tweet: Tweet,
+    tweet: ElizaTweet,
     client: ClientBase,
     maxReplies = 10
-): Promise<Tweet[]> {
-    const thread: Tweet[] = [];
+): Promise<ElizaTweet[]> {
+    const thread: ElizaTweet[] = [];
     const visited: Set<string> = new Set();
 
-    async function processThread(currentTweet: Tweet, depth = 0) {
+    async function processThread(currentTweet: ElizaTweet, depth = 0) {
         elizaLogger.debug("Processing tweet:", {
             id: currentTweet.id,
             inReplyToStatusId: currentTweet.inReplyToStatusId,
@@ -64,13 +66,13 @@ export async function buildConversationThread(
             const roomId = stringToUuid(
                 currentTweet.conversationId + "-" + client.runtime.agentId
             );
-            const userId = stringToUuid(currentTweet.userId);
+            const userId = stringToUuid(currentTweet.authorId);
 
             await client.runtime.ensureConnection(
                 userId,
                 roomId,
-                currentTweet.username,
-                currentTweet.name,
+                currentTweet.authorUsername,
+                currentTweet.authorName,
                 "twitter"
             );
 
@@ -95,9 +97,9 @@ export async function buildConversationThread(
                 createdAt: currentTweet.timestamp * 1000,
                 roomId,
                 userId:
-                    currentTweet.userId === client.profile.id
+                    currentTweet.authorId === client.profile.id
                         ? client.runtime.agentId
-                        : stringToUuid(currentTweet.userId),
+                        : stringToUuid(currentTweet.authorId),
                 embedding: getEmbeddingZeroVector(),
             });
         }
@@ -123,9 +125,13 @@ export async function buildConversationThread(
                 currentTweet.inReplyToStatusId
             );
             try {
-                const parentTweet = await client.twitterClient.getTweet(
-                    currentTweet.inReplyToStatusId
-                );
+                const parentTweetResult = await client.requestQueue.add(async () => {
+                    return await client.twitterClient.v2.singleTweet(currentTweet.inReplyToStatusId, {
+                        "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+                        "expansions": "author_id,referenced_tweets.id"
+                    })
+                });
+                const parentTweet = createElizaTweet(parentTweetResult.data, new TwitterV2IncludesHelper(parentTweetResult));
 
                 if (parentTweet) {
                     elizaLogger.debug("Found parent tweet:", {
@@ -217,61 +223,49 @@ export async function sendTweet(
             mediaData = await fetchMediaData(content.attachments);
         }
 
-        const cleanChunk = deduplicateMentions(chunk.trim())
+        const cleanChunk = deduplicateMentions(chunk.trim());
 
-        const result = await client.requestQueue.add(async () =>
-            isLongTweet
-                ? client.twitterClient.sendLongTweet(
-                      cleanChunk,
-                      previousTweetId,
-                      mediaData
-                  )
-                : client.twitterClient.sendTweet(
-                      cleanChunk,
-                      previousTweetId,
-                      mediaData
-                  )
-        );
+        const tweetData: SendTweetV2Params = {
+            text: cleanChunk,
+            reply: {
+                in_reply_to_tweet_id: previousTweetId
+            }
+        };
 
-        const body = await result.json();
-        const tweetResult = isLongTweet
-            ? body?.data?.notetweet_create?.tweet_results?.result
-            : body?.data?.create_tweet?.tweet_results?.result;
-
-        // if we have a response
-        if (tweetResult) {
-            // Parse the response
-            const finalTweet: Tweet = {
-                id: tweetResult.rest_id,
-                text: tweetResult.legacy.full_text,
-                conversationId: tweetResult.legacy.conversation_id_str,
-                timestamp:
-                    new Date(tweetResult.legacy.created_at).getTime() / 1000,
-                userId: tweetResult.legacy.user_id_str,
-                inReplyToStatusId: tweetResult.legacy.in_reply_to_status_id_str,
-                permanentUrl: `https://twitter.com/${twitterUsername}/status/${tweetResult.rest_id}`,
-                hashtags: [],
-                mentions: [],
-                photos: [],
-                thread: [],
-                urls: [],
-                videos: [],
-            };
-            sentTweets.push(finalTweet);
-            previousTweetId = finalTweet.id;
-        } else {
-            elizaLogger.error("Error sending tweet chunk:", {
-                chunk,
-                response: body,
-            });
+        if (mediaData) {
+            // Upload media and get media IDs
+            const mediaIds = await Promise.all(
+                mediaData.map(async (media) => {
+                    const mediaId = await client.twitterClient.v2.uploadMedia(
+                        media.data,
+                        { media_type: media.mediaType }
+                    );
+                    return mediaId;
+                })
+            );
+            tweetData.media = { media_ids: mediaIds as [string, string, string, string] };
         }
 
-        // Wait a bit between tweets to avoid rate limiting issues
-        await wait(1000, 2000);
+        const result = await client.requestQueue.add(async () =>
+            client.twitterClient.v2.tweet(tweetData)
+        );
+
+        // fetch the tweet that was just posted
+        const tweetResult = await client.requestQueue.add(async () =>
+            client.twitterClient.v2.singleTweet(result.data.id, {
+                "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+                "expansions": "author_id"
+            })
+        );
+
+        const finalTweet = createElizaTweet(tweetResult.data, new TwitterV2IncludesHelper(tweetResult));
+
+        sentTweets.push(finalTweet);
+        previousTweetId = finalTweet.id;
     }
 
     const memories: Memory[] = sentTweets.map((tweet) => ({
-        id: stringToUuid(tweet.id + "-" + client.runtime.agentId),
+        id: stringToUuid(`${tweet.id}-${client.runtime.agentId}`),
         agentId: client.runtime.agentId,
         userId: client.runtime.agentId,
         content: {
@@ -460,4 +454,44 @@ function splitParagraph(paragraph: string, maxLength: number): string[] {
     const restoredChunks = restoreUrls(splittedChunks, placeholderMap);
 
     return restoredChunks;
+}
+
+export function createElizaTweet(fetchedTweetResult: TweetV2, includes: TwitterV2IncludesHelper): ElizaTweet {
+    if (!fetchedTweetResult) {
+        return null;
+    }
+
+    // get the author
+    const author = includes.author(fetchedTweetResult);
+
+    // get the replied to tweet id
+    let repliedToId = null;
+    if (fetchedTweetResult.referenced_tweets && fetchedTweetResult.referenced_tweets.length > 0) {
+        for (const referencedTweet of fetchedTweetResult.referenced_tweets) {
+            if (referencedTweet.type === "replied_to") {
+                repliedToId = referencedTweet.id;
+            }
+        }
+    }
+
+    // create the tweet
+    const tweet: ElizaTweet = {
+        id: fetchedTweetResult.id,
+        text: fetchedTweetResult.text,
+        conversationId: fetchedTweetResult.conversation_id,
+        timestamp: fetchedTweetResult.created_at ? new Date(fetchedTweetResult.created_at).getTime() : null,
+        authorId: author.id,
+        authorName: author.name,
+        authorUsername: author.username,
+        photos: [],
+        thread: [],
+        videos: [],
+        mentions: fetchedTweetResult.entities?.mentions?.map((mention) => mention.username) || [],
+        permanentUrl: `https://x.com/${author.username}/status/${fetchedTweetResult.id}`,
+        inReplyToStatusId: repliedToId,
+        isReply: !!repliedToId,
+        isRetweet: false,
+    }
+    
+    return tweet;
 }

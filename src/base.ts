@@ -13,10 +13,13 @@ import {
 import {
     TwitterApi,
     TweetV2,
-    UserV2
+    UserV2,
+    TwitterV2IncludesHelper
 } from "twitter-api-v2";
 import { EventEmitter } from "events";
 import type { TwitterConfig } from "./environment.ts";
+import type { ElizaTweet, TwitterProfile } from "./types.ts";
+import { createElizaTweet } from "./utils.ts";
 
 export function extractAnswer(text: string): string {
     const startIndex = text.indexOf("Answer: ") + 8;
@@ -30,19 +33,11 @@ interface QueryTweetsResponse {
     previous?: string;
 }
 
-type TwitterProfile = {
-    id: string;
-    username: string;
-    screenName: string;
-    bio: string;
-    nicknames: string[];
-};
-
 // create a default profile
 const defaultProfile: TwitterProfile = {
     id: "",
     username: "",
-    screenName: "",
+    name: "",
     bio: "",
     nicknames: [],
 };
@@ -212,7 +207,7 @@ export class ClientBase extends EventEmitter {
             this.runtime.character.twitterProfile = {
                 id: this.profile.id,
                 username: this.profile.username,
-                screenName: this.profile.screenName,
+                name: this.profile.name,
                 bio: this.profile.bio,
                 nicknames: this.profile.nicknames,
             };
@@ -317,6 +312,36 @@ export class ClientBase extends EventEmitter {
         }
     }
 
+    async getMentions(
+        userId: string,
+        count: number,
+        options?: {
+            "tweet.fields"?: string[];
+            "expansions"?: string[];
+        }
+    ): Promise<ElizaTweet[]> {
+        elizaLogger.debug("fetching mentions");
+
+        // default options
+        const defaultFields = ["created_at", "author_id", "conversation_id", "entities", "referenced_tweets", "text"];
+        const defaultExpansions = ["author_id"];
+
+        // select options or defaults
+        const tweetFields = options?.["tweet.fields"] || defaultFields;
+        const expansions = options?.["expansions"] || defaultExpansions;
+
+        // fetch mentions
+        const mentions = await this.requestQueue.add(async () => {
+            return await this.twitterClient.v2.userMentionTimeline(userId, {
+                max_results: count,
+                "tweet.fields": tweetFields.join(","),
+                "expansions": expansions.join(",")
+            });
+        });
+        
+        return mentions.tweets.map((tweet) => createElizaTweet(tweet, mentions.includes));
+    }
+
     private async populateTimeline() {
         elizaLogger.debug("populating timeline...");
 
@@ -383,7 +408,7 @@ export class ClientBase extends EventEmitter {
                             this.runtime.agentId,
                             roomId,
                             this.profile.username,
-                            this.profile.screenName,
+                            this.profile.name,
                             "twitter"
                         );
                     } else {
@@ -516,7 +541,7 @@ export class ClientBase extends EventEmitter {
                     this.runtime.agentId,
                     roomId,
                     this.profile.username,
-                    this.profile.screenName,
+                    this.profile.name,
                     "twitter"
                 );
             } else {
@@ -617,13 +642,13 @@ export class ClientBase extends EventEmitter {
         }
     }
 
-    async getCachedTimeline(): Promise<Tweet[] | undefined> {
-        return await this.runtime.cacheManager.get<Tweet[]>(
+    async getCachedTimeline(): Promise<ElizaTweet[] | undefined> {
+        return await this.runtime.cacheManager.get<ElizaTweet[]>(
             `twitter/${this.profile.username}/timeline`
         );
     }
 
-    async cacheTimeline(timeline: Tweet[]) {
+    async cacheTimeline(timeline: ElizaTweet[]) {
         await this.runtime.cacheManager.set(
             `twitter/${this.profile.username}/timeline`,
             timeline,
@@ -631,7 +656,7 @@ export class ClientBase extends EventEmitter {
         );
     }
 
-    async cacheMentions(mentions: Tweet[]) {
+    async cacheMentions(mentions: ElizaTweet[]) {
         await this.runtime.cacheManager.set(
             `twitter/${this.profile.username}/mentions`,
             mentions,
@@ -676,7 +701,7 @@ export class ClientBase extends EventEmitter {
         return {
             id: userData.id,
             username: userData.username,
-            screenName: userData.name,
+            name: userData.name,
             bio: userData.description,
             nicknames: [],
         };
