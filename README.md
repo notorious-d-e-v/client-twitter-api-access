@@ -2,7 +2,7 @@
 
 Twitter/X integration for Eliza Agents!
 
-This library uses X API Access Keys instead of X username and password.
+This library uses **X API Access Keys instead of X username and password**.
 We consider this to be more reliable, because your account won't get banned.
 Additionally, it's not a constant arms race to find new ways to outsmart the X dev team.
 
@@ -13,11 +13,11 @@ This is a work in progress and will be built out as needed.
 ## Features
 
 - Post generation and management
-- ~~Interaction handling (mentions, replies)~~ (needs implementing)
-- ~~Search functionality~~ (needs implementing)
-- ~~Twitter Spaces support with STT/TTS capabilities~~ (needs implementing)
-- ~~Media handling (images, videos)~~ (needs implementing)
-- ~~Approval workflow via Discord (optional)~~ (needs implementing)
+- Interaction handling (mentions, ~~replies)~~ (needs re-implementing)
+- ~~Search functionality~~ (needs re-implementing)
+- ~~Twitter Spaces support with STT/TTS capabilities~~ (needs re-implementing)
+- ~~Media handling (images, videos)~~ (needs re-implementing)
+- Approval workflow via Discord (optional)
 
 ## Setup Guide
 
@@ -41,7 +41,33 @@ This is a work in progress and will be built out as needed.
 9. Look for "Authentication Tokens" then look for "Access Token and Secret". Click Regenerate, and make sure you give Read, Write, and DM permissions. **Important** Write down the keys and values.
 10. Now you can use your API Key, API Secret, Access Token, and Access Secret to authenticate your user and use the API. We will do this in Step 1 below.   
 
-### Step 1: Configure Environment Variables
+### Step 1: Install the Plugin
+
+Install the plugin using eliza's command line tool.
+From your agent's root directory, do
+
+```bash
+npx elizaos plugins list
+npx elizaos plugins add @elizaos-plugins/client-twitter-api-access
+```
+
+### Step 2: Add the Plugin To Your Character File
+
+Edit your character json file and add `@elizaos-plugins/client-twitter-api-access` to your `plugins`.
+Example
+
+```json
+{
+    ...
+    "plugins": [
+        ...
+        "@elizaos-plugins/client-twitter-api-access"
+    ],
+    ...
+}
+```
+
+### Step 3: Configure Environment Variables
 
 Create or edit `.env` file in your project root:
 
@@ -81,43 +107,28 @@ TWITTER_APPROVAL_DISCORD_CHANNEL_ID=
 TWITTER_APPROVAL_CHECK_INTERVAL=300000  # 5 minutes in milliseconds
 ```
 
-### Step 2: Initialize the Client
-
-```typescript
-import { TwitterClientInterface } from "@elizaos/twitter";
-
-const twitterPlugin = {
-    name: "twitter",
-    description: "Twitter client",
-    clients: [TwitterClientInterface],
-};
-
-// Register with your Eliza runtime
-runtime.registerPlugin(twitterPlugin);
-```
-
 ## Features
 
 ### Post Generation
 
 The client can automatically generate and post tweets based on your agent's character profile and topics. Posts can be:
 - Regular tweets (≤280 characters)
-- Long-form tweets (Note Tweets)
-- Media tweets (with images/videos)
+~~- Long-form tweets (Note Tweets)~~ (needs re-implementing)
+~~- Media tweets (with images/videos)~~ (needs re-implementing)
 
 ### Interactions
 
 Handles:
 - Mentions
 - Replies
-- Quote tweets
-- Direct messages
+~~- Quote tweets~~ (need re-implementing)
+~~- Direct messages~~ (needs re-implementing)
 
-### Search
+~~### Search~~ (needs re-implementing)
 
-When enabled, periodically searches Twitter for relevant topics and engages with found content.
+~~When enabled, periodically searches Twitter for relevant topics and engages with found content.~~
 
-### Twitter Spaces
+~~### Twitter Spaces~~ (needs re-implementing)
 
 Supports creating and managing Twitter Spaces with:
 - Speech-to-Text (STT) for transcription
@@ -147,20 +158,10 @@ DEBUG=eliza:* pnpm start
 
 ### Common Issues
 
-#### Login Failures
-- Verify credentials in .env
-- Check 2FA configuration
-- Ensure no rate limiting
-
 #### Post Generation Issues
 - Verify character profile configuration
 - Check MAX_TWEET_LENGTH setting
 - Monitor approval workflow logs
-
-#### Spaces Issues
-- Verify ELEVENLABS_XI_API_KEY if using TTS
-- Check space configuration in character profile
-- Monitor idle timeout settings
 
 ## Security Notes
 
