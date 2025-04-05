@@ -1552,7 +1552,7 @@ var TwitterPostClient = class {
       createdAt: tweet.timestamp
     });
   }
-  // TODO: #TWITTER-V2-007 - Reimplement note tweet handling using Twitter API v2
+  // TODO: #TWITTER-V2-006 - Reimplement note tweet handling using Twitter API v2
   // async handleNoteTweet(
   //     client: ClientBase,
   //     content: string,
@@ -1807,7 +1807,7 @@ var TwitterPostClient = class {
     }
     return truncateContent;
   }
-  // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+  // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
   /**
    * Processes tweet actions (likes, retweets, quotes, replies). If isDryRun is true,
    * only simulates and logs actions without making API calls.
@@ -1925,7 +1925,7 @@ var TwitterPostClient = class {
   //         this.isProcessing = false;
   //     }
   // }
-  // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+  // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
   /**
    * Processes a list of timelines by executing the corresponding tweet actions.
    * Each timeline includes the tweet, action response, tweet state, and room context.
@@ -2187,7 +2187,7 @@ var TwitterPostClient = class {
   //     }
   //     return results;
   // }
-  // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+  // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
   /**
    * Handles text-only replies to tweets. If isDryRun is true, only logs what would
    * have been replied without making API calls.

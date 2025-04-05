@@ -275,7 +275,7 @@ export class TwitterPostClient {
             elizaLogger.log(`Next tweet scheduled in ${randomMinutes} minutes`);
         };
 
-        // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+        // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
         // const processActionsLoop = async () => {
         //     const actionInterval = this.client.twitterConfig.ACTION_INTERVAL; // Defaults to 5 minutes
 
@@ -313,7 +313,7 @@ export class TwitterPostClient {
             elizaLogger.log("Tweet generation loop started");
         }
 
-        // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+        // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
         // if (this.client.twitterConfig.ENABLE_ACTION_PROCESSING) {
         //     processActionsLoop().catch((error) => {
         //         elizaLogger.error(
@@ -374,7 +374,7 @@ export class TwitterPostClient {
         });
     }
 
-    // TODO: #TWITTER-V2-007 - Reimplement note tweet handling using Twitter API v2
+    // TODO: #TWITTER-V2-006 - Reimplement note tweet handling using Twitter API v2
     // async handleNoteTweet(
     //     client: ClientBase,
     //     content: string,
@@ -452,7 +452,7 @@ export class TwitterPostClient {
 
             let result;
 
-            // TODO: #TWITTER-V2-007 - Reimplement note tweet handling using Twitter API v2
+            // TODO: #TWITTER-V2-006 - Reimplement note tweet handling using Twitter API v2
             if (tweetTextForPosting.length > DEFAULT_MAX_TWEET_LENGTH) {
                 elizaLogger.error("must reimplement note tweets using twitter v2 api")
                 // result = await this.handleNoteTweet(
@@ -716,7 +716,7 @@ export class TwitterPostClient {
         return truncateContent;
     }
 
-    // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+    // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
     /**
      * Processes tweet actions (likes, retweets, quotes, replies). If isDryRun is true,
      * only simulates and logs actions without making API calls.
@@ -851,7 +851,7 @@ export class TwitterPostClient {
     //     }
     // }
 
-    // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+    // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
     /**
      * Processes a list of timelines by executing the corresponding tweet actions.
      * Each timeline includes the tweet, action response, tweet state, and room context.
@@ -1130,7 +1130,7 @@ export class TwitterPostClient {
     //     return results;
     // }
 
-    // TODO: #TWITTER-V2-06 - Reimplement action processing using Twitter API v2
+    // TODO: #TWITTER-V2-008 - Reimplement action processing using Twitter API v2
     /**
      * Handles text-only replies to tweets. If isDryRun is true, only logs what would
      * have been replied without making API calls.

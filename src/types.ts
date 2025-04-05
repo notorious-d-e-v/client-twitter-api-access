@@ -13,7 +13,7 @@ export type MediaData = {
 /**
  * A TweetV2 with useful metadata for Eliza usecases.
  */
-// TODO: #TWITTER-V2-008 - Refactor ElizaTweet type to become TweetV2 from Twitter API v2
+// TODO: #TWITTER-V2-007 - Refactor ElizaTweet type to become TweetV2 from Twitter API v2
 export interface ElizaTweet extends TweetV2 {
     id: string;
     conversationId?: string;

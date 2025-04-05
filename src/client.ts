@@ -28,7 +28,7 @@ class TwitterManager {
         // Posting logic
         this.post = new TwitterPostClient(this.client, runtime);
 
-        // TODO: #TWITTER-V2-001 - Reimplement search logic using Twitter API v2
+        // TODO: #TWITTER-V2-003 - Reimplement search logic using Twitter API v2
         // Optional search logic (enabled if TWITTER_SEARCH_ENABLE is true)
         // if (twitterConfig.TWITTER_SEARCH_ENABLE) {
         //     this.search = new TwitterSearchClient(this.client, runtime);
@@ -37,7 +37,7 @@ class TwitterManager {
         // Mentions and interactions
         this.interaction = new TwitterInteractionClient(this.client, runtime);
 
-        // TODO: #TWITTER-V2-002 - Reimplement spaces logic using Twitter API v2
+        // TODO: #TWITTER-V2-004 - Reimplement spaces logic using Twitter API v2
         // Optional Spaces logic (enabled if TWITTER_SPACES_ENABLE is true)
         // if (twitterConfig.TWITTER_SPACES_ENABLE) {
             // this.space = new TwitterSpaceClient(this.client, runtime);
@@ -65,7 +65,7 @@ export const TwitterClientInterface: Client = {
         // Start the posting loop
         await manager.post.start();
 
-        // TODO: #TWITTER-V2-003 - Reimplement search manager initialization using Twitter API v2
+        // TODO: #TWITTER-V2-003 - Reimplement search logic using Twitter API v2
         // // Start the search logic if it exists
         // if (manager.search) {
         //     await manager.search.start();
@@ -74,7 +74,7 @@ export const TwitterClientInterface: Client = {
         // Start interactions (mentions, replies)
         await manager.interaction.start();
 
-        // TODO: #TWITTER-V2-004 - Reimplement spaces manager initialization using Twitter API v2
+        // TODO: #TWITTER-V2-004 - Reimplement spaces logic using Twitter API v2
         // // If Spaces are enabled, start the periodic check
         // if (manager.space) {
         //     manager.space.startPeriodicSpaceCheck();
