@@ -283,7 +283,6 @@ export class TwitterSearchClient {
                         this.client,
                         response,
                         message.roomId,
-                        this.twitterUsername,
                         selectedTweet.id
                     );
                     return memories;

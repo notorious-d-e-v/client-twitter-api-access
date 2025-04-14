@@ -468,7 +468,6 @@ export class TwitterInteractionClient {
                             this.client,
                             response,
                             message.roomId,
-                            this.client.profile.username,
                             tweetId || tweet.id
                         );
                         return memories;

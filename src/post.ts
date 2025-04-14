@@ -414,14 +414,22 @@ export class TwitterPostClient {
     async sendStandardTweet(
         client: ClientBase,
         content: string,
-        tweetId?: string,
+        inReplyToTweetId?: string,
         mediaData?: MediaData[]
     ) {
         try {
+            // TODO: handle media data
+
+            // send the tweet
             const standardTweetResult: TweetV2PostTweetResult = await client.requestQueue.add(
                 async () => {
                     const payload: SendTweetV2Params = {
                         text: content,
+                    }
+                    if (inReplyToTweetId) {
+                        payload.reply = {
+                            in_reply_to_tweet_id: inReplyToTweetId
+                        }
                     }
                     const result = await client.twitterClient.v2.tweet(payload)
                     return result;
@@ -434,6 +442,7 @@ export class TwitterPostClient {
             return standardTweetResult.data;
         } catch (error) {
             elizaLogger.error("Error sending standard Tweet:", error);
+            console.error(error);
             throw error;
         }
     }
@@ -444,8 +453,8 @@ export class TwitterPostClient {
         tweetTextForPosting: string,
         roomId: UUID,
         rawTweetContent: string,
-        twitterUsername: string,
-        mediaData?: MediaData[]
+        inReplyToTweetId?: string,
+        mediaData?: MediaData[],
     ) {
         try {
             elizaLogger.log(`Posting new tweet:\n`);
@@ -465,7 +474,7 @@ export class TwitterPostClient {
                 result = await this.sendStandardTweet(
                     client,
                     tweetTextForPosting,
-                    undefined,
+                    inReplyToTweetId,
                     mediaData
                 );
             }
@@ -495,6 +504,19 @@ export class TwitterPostClient {
             console.error(error);
             elizaLogger.error("Error sending tweet:", error);
         }
+    }
+
+    /**
+     * Posts a thread of tweets.
+     * @param tweets - An array of SendTweetV2Params or strings.
+     * @param client - The client to use to post the tweets.
+     * @returns An array of TweetV2PostTweetResult objects.
+     */
+    async postTweetThread(
+        tweets: (SendTweetV2Params | string)[],
+    ): Promise<TweetV2PostTweetResult[]> {
+        const sentTweets = await this.client.twitterClient.v2.tweetThread(tweets);
+        return sentTweets;
     }
 
     /**
@@ -618,11 +640,11 @@ export class TwitterPostClient {
                     elizaLogger.log(
                         `Sending Tweet For Approval:\n ${tweetTextForPosting}`
                     );
-                    // await this.sendForApproval(
-                    //     tweetTextForPosting,
-                    //     roomId,
-                    //     rawTweetContent
-                    // );
+                    await this.sendForApproval(
+                        tweetTextForPosting,
+                        roomId,
+                        rawTweetContent
+                    );
                     elizaLogger.log("Tweet sent for approval");
                 } else {
                     elizaLogger.log(
@@ -634,7 +656,6 @@ export class TwitterPostClient {
                         tweetTextForPosting,
                         roomId,
                         rawTweetContent,
-                        this.client.profile.username,
                         mediaData
                     );
                 }
@@ -642,6 +663,7 @@ export class TwitterPostClient {
                 elizaLogger.error("Error sending tweet:", error);
             }
         } catch (error) {
+            console.error(error);
             elizaLogger.error("Error generating new tweet:", error);
         }
     }
@@ -1465,8 +1487,7 @@ export class TwitterPostClient {
                     this.client,
                     pendingTweet.tweetTextForPosting,
                     pendingTweet.roomId,
-                    pendingTweet.rawTweetContent,
-                    this.client.profile.username
+                    pendingTweet.rawTweetContent
                 );
 
                 // Notify on Discord about posting
