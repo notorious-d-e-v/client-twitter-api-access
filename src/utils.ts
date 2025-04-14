@@ -8,7 +8,7 @@ import type { Media } from "@elizaos/core";
 import fs from "fs";
 import path from "path";
 import { ElizaTweet, MediaData } from "./types";
-import { SendTweetV2Params, TweetV2 } from "twitter-api-v2";
+import { SendTweetV2Params, TweetV2, TweetV2PostTweetResult } from "twitter-api-v2";
 import { TwitterV2IncludesHelper } from "twitter-api-v2";
 
 export const wait = (minTime = 1000, maxTime = 3000) => {
@@ -206,11 +206,9 @@ export async function sendTweet(
     client: ClientBase,
     content: Content,
     roomId: UUID,
-    twitterUsername: string,
     inReplyTo: string
 ): Promise<Memory[]> {
     const maxTweetLength = client.twitterConfig.MAX_TWEET_LENGTH;
-    const isLongTweet = maxTweetLength > 280;
 
     const tweetChunks = splitTweetContent(content.text, maxTweetLength);
     const sentTweets: Tweet[] = [];

@@ -19,6 +19,7 @@
     "dist"
   ],
   "dependencies": {
+    "@discordjs/util": "^1.1.1",
     "@elizaos/core": "^0.25.9",
     "discord.js": "^14.16.3",
     "twitter-api-v2": "^1.22.0",

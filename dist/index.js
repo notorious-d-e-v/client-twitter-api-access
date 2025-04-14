@@ -163,9 +163,8 @@ async function fetchMediaData(attachments) {
     })
   );
 }
-async function sendTweet(client, content, roomId, twitterUsername, inReplyTo) {
+async function sendTweet(client, content, roomId, inReplyTo) {
   const maxTweetLength = client.twitterConfig.MAX_TWEET_LENGTH;
-  const isLongTweet = maxTweetLength > 280;
   const tweetChunks = splitTweetContent(content.text, maxTweetLength);
   const sentTweets = [];
   let previousTweetId = inReplyTo;
@@ -1255,7 +1254,6 @@ ${response.text}`
               this.client,
               response2,
               message.roomId,
-              this.client.profile.username,
               tweetId2 || tweet.id
             );
             return memories;
@@ -1587,13 +1585,18 @@ var TwitterPostClient = class {
   //         throw new Error(`Note Tweet failed: ${error}`);
   //     }
   // }
-  async sendStandardTweet(client, content, tweetId, mediaData) {
+  async sendStandardTweet(client, content, inReplyToTweetId, mediaData) {
     try {
       const standardTweetResult = await client.requestQueue.add(
         async () => {
           const payload = {
             text: content
           };
+          if (inReplyToTweetId) {
+            payload.reply = {
+              in_reply_to_tweet_id: inReplyToTweetId
+            };
+          }
           const result = await client.twitterClient.v2.tweet(payload);
           return result;
         }
@@ -1605,10 +1608,11 @@ var TwitterPostClient = class {
       return standardTweetResult.data;
     } catch (error) {
       elizaLogger4.error("Error sending standard Tweet:", error);
+      console.error(error);
       throw error;
     }
   }
-  async postTweet(runtime, client, tweetTextForPosting, roomId, rawTweetContent, twitterUsername, mediaData) {
+  async postTweet(runtime, client, tweetTextForPosting, roomId, rawTweetContent, inReplyToTweetId, mediaData) {
     try {
       elizaLogger4.log(`Posting new tweet:
 `);
@@ -1619,7 +1623,7 @@ var TwitterPostClient = class {
         result = await this.sendStandardTweet(
           client,
           tweetTextForPosting,
-          void 0,
+          inReplyToTweetId,
           mediaData
         );
       }
@@ -1644,6 +1648,16 @@ var TwitterPostClient = class {
       console.error(error);
       elizaLogger4.error("Error sending tweet:", error);
     }
+  }
+  /**
+   * Posts a thread of tweets.
+   * @param tweets - An array of SendTweetV2Params or strings.
+   * @param client - The client to use to post the tweets.
+   * @returns An array of TweetV2PostTweetResult objects.
+   */
+  async postTweetThread(tweets) {
+    const sentTweets = await this.client.twitterClient.v2.tweetThread(tweets);
+    return sentTweets;
   }
   /**
    * Generates and posts a new tweet. If isDryRun is true, only logs what would have been posted.
@@ -1737,6 +1751,11 @@ var TwitterPostClient = class {
             `Sending Tweet For Approval:
  ${tweetTextForPosting}`
           );
+          await this.sendForApproval(
+            tweetTextForPosting,
+            roomId,
+            rawTweetContent
+          );
           elizaLogger4.log("Tweet sent for approval");
         } else {
           elizaLogger4.log(
@@ -1749,7 +1768,6 @@ var TwitterPostClient = class {
             tweetTextForPosting,
             roomId,
             rawTweetContent,
-            this.client.profile.username,
             mediaData
           );
         }
@@ -1757,6 +1775,7 @@ var TwitterPostClient = class {
         elizaLogger4.error("Error sending tweet:", error);
       }
     } catch (error) {
+      console.error(error);
       elizaLogger4.error("Error generating new tweet:", error);
     }
   }
@@ -2456,8 +2475,7 @@ var TwitterPostClient = class {
           this.client,
           pendingTweet.tweetTextForPosting,
           pendingTweet.roomId,
-          pendingTweet.rawTweetContent,
-          this.client.profile.username
+          pendingTweet.rawTweetContent
         );
         try {
           const channel = await this.discordClientForApproval.channels.fetch(
