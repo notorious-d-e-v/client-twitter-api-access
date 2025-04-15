@@ -36,17 +36,17 @@ This is a work in progress and will be built out as needed.
 4. Find the Default Project that X created for you.
 5. Look for the App that X created for you and click the Settings gear.
 6. Scroll down to "User Authentication Settings" and click the "Set Up" button.
-7. Give the app Read, Write, and DM permissions if you like.
+7. Give the app "Read, Write, and Direct Message" permissions if you like.
 8. Under "Type of App" click "Web App, Automated App, or Bot".
 9. Under "App Info" -> "Callback URI" enter "http://localhost:5000"
 10. Under "App Info" -> "Website URL" enter your website URL.
-11. Create your App.
-12. Although we won't need them now, note down your app's "Client ID" and "Client Secret" in case you need them in the future.
+11. Scroll down and click "Save" to create your App. Confirm the popup dialog by pressing "Yes".
+12. Although we won't need them now, note down your app's "Client ID" and "Client Secret" in case you need them in the future. Press "Done" and "Yes I saved it".
 13. Go back to your App's Settings and click the "Keys and tokens" tab.
 14. Alternatively, go to https://developer.x.com/en/portal/projects/XXXXXX/apps/YYYYYY keys where XXXXX is your project ID and YYYYYY is your app ID.
 15. Look for "Consumer Keys" and click Regenerate. **Important** Write these down after you regenerate them.
 16. Look for "Authentication Tokens" then look for "Access Token and Secret". Click Regenerate, and it will create new tokens with Read, Write, and DM permissions. **Important** Write down the keys and values.
-17. Now you can use your API Key, API Secret, Access Token, and Access Secret to authenticate your user and use the API. We will do this in Step 1 below.   
+17. Now you can use your API Key, API Secret, Access Token, and Access Secret to authenticate your user and use the API. We will do this in Step 3 below.   
 
 ### Step 1: Install the Plugin
 
