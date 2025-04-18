@@ -28,7 +28,7 @@ export function extractAnswer(text: string): string {
 }
 
 interface QueryTweetsResponse {
-    tweets: TweetV2[];
+    tweets: ElizaTweet[];
     next?: string;
     previous?: string;
 }
@@ -131,13 +131,17 @@ export class ClientBase extends EventEmitter {
         }
 
         // TODO replace with v2 api call
-        // const tweet = await this.requestQueue.add(() =>
-            // this.twitterClient.getTweet(tweetId)
-        // );
+        const tweet = await this.requestQueue.add(() =>
+            this.twitterClient.v2.singleTweet(tweetId, {
+                "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+                "expansions": "author_id",
+            })
+        );
+        const includes = new TwitterV2IncludesHelper(tweet);
+        const elizaTweet = createElizaTweet(tweet.data, includes);
 
-        // await this.cacheTweet(tweet);
-        // return tweet;
-        return
+        await this.cacheTweet(elizaTweet);
+        return elizaTweet;
     }
 
     callback: (self: ClientBase) => any = null;
@@ -276,38 +280,25 @@ export class ClientBase extends EventEmitter {
 
     async fetchSearchTweets(
         query: string,
-        maxTweets: number,
-        // searchMode: SearchMode,
-        cursor?: string
+        maxTweets: number
     ): Promise<QueryTweetsResponse> {
         try {
-            // Sometimes this fails because we are rate limited. in this case, we just need to return an empty array
-            // if we dont get a response in 5 seconds, something is wrong
-            const timeoutPromise = new Promise((resolve) =>
-                setTimeout(() => resolve({ tweets: [] }), 15000)
+            const result = await this.requestQueue.add(
+                async () => {
+                    return await this.twitterClient.v2.search(query, {
+                        max_results: maxTweets,
+                        "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+                        "expansions": "author_id",
+                    });
+                }
             );
 
-            try {
-                const result = await this.requestQueue.add(
-                    // TODO replace with v2 api call 
-                    // async () =>
-                    //     await Promise.race([
-                    //         this.twitterClient.fetchSearchTweets(
-                    //             query,
-                    //             maxTweets,
-                    //             searchMode,
-                    //             cursor
-                    //         ),
-                    //         timeoutPromise,
-                    //     ])
-                );
-                return (result ?? { tweets: [] }) as QueryTweetsResponse;
-            } catch (error) {
-                elizaLogger.error("Error fetching search tweets:", error);
-                return { tweets: [] };
-            }
+            const tweets = result.tweets.map((tweet) => createElizaTweet(tweet, result.includes));
+
+            return { tweets };
         } catch (error) {
             elizaLogger.error("Error fetching search tweets:", error);
+            console.error(error);
             return { tweets: [] };
         }
     }

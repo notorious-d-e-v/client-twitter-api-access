@@ -38,138 +38,120 @@ export async function buildConversationThread(
     maxReplies = 10
 ): Promise<ElizaTweet[]> {
     const thread: ElizaTweet[] = [];
-    const visited: Set<string> = new Set();
+    const conversationTweets: ElizaTweet[] = [];
 
-    async function processThread(currentTweet: ElizaTweet, depth = 0) {
-        elizaLogger.debug("Processing tweet:", {
-            id: currentTweet.id,
-            inReplyToStatusId: currentTweet.inReplyToStatusId,
-            depth: depth,
+    elizaLogger.debug("Building conversation thread for tweet:");
+    console.dir(tweet, { depth: null });
+
+    try {
+        // Use the Twitter API v2 search endpoint to get all tweets in the conversation
+        const query = `conversation_id:${tweet.conversationId}`;
+        const searchResult = await client.twitterClient.v2.search(query, {
+            "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
+            "expansions": "author_id,referenced_tweets.id",
+            max_results: 100,
         });
 
-        if (!currentTweet) {
-            elizaLogger.debug("No current tweet found for thread building");
-            return;
+        const tweets = searchResult.data.data;
+        const includesHelper = new TwitterV2IncludesHelper(searchResult);
+
+        // sort the tweets by timestamp in order to get them from oldest to newest
+        tweets.sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+        // create the ElizaTweet objects from the returned tweets
+        for (const tweetData of tweets) {
+            const elizaTweet = createElizaTweet(tweetData, includesHelper);
+
+            if (!elizaTweet) {
+                continue;
+            }
+
+            conversationTweets.push(elizaTweet);
         }
 
-        // Stop if we've reached our reply limit
-        if (depth >= maxReplies) {
-            elizaLogger.debug("Reached maximum reply depth", depth);
-            return;
+        // create a mapping of all the tweets by id
+        const tweetsById = new Map<string, ElizaTweet>();
+        for (const tweet of conversationTweets) {
+            tweetsById.set(tweet.id, tweet);
         }
+    
+        // build the reply chain of the most recent tweet only
+        // filtering out other tweets in the conversation
+        const replyChain = [tweet];
+        let currentTweet = tweet;
 
-        // Handle memory storage
-        const memory = await client.runtime.messageManager.getMemoryById(
-            stringToUuid(currentTweet.id + "-" + client.runtime.agentId)
-        );
-        if (!memory) {
-            const roomId = stringToUuid(
-                currentTweet.conversationId + "-" + client.runtime.agentId
+        while (currentTweet && currentTweet.inReplyToStatusId) {
+            const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
+            if (parentTweet) {
+                replyChain.push(parentTweet);
+            }
+            currentTweet = parentTweet;
+        }
+    
+        // reverse the reply chain to get it from oldest to newest
+        replyChain.reverse();
+        
+        // log the reply chain
+        elizaLogger.log("replyChain: ", replyChain);
+    
+        // create memories if they don't exist
+        for (const elizaTweet of replyChain) {
+            // Handle memory storage
+            const memory = await client.runtime.messageManager.getMemoryById(
+                stringToUuid(elizaTweet.id + "-" + client.runtime.agentId)
             );
-            const userId = stringToUuid(currentTweet.authorId);
+            if (!memory) {
+                const roomId = stringToUuid(
+                    elizaTweet.conversationId + "-" + client.runtime.agentId
+                );
+                const userId = stringToUuid(elizaTweet.authorId);
 
-            await client.runtime.ensureConnection(
-                userId,
-                roomId,
-                currentTweet.authorUsername,
-                currentTweet.authorName,
-                "twitter"
-            );
+                await client.runtime.ensureConnection(
+                    userId,
+                    roomId,
+                    elizaTweet.authorUsername,
+                    elizaTweet.authorName,
+                    "twitter"
+                );
 
-            await client.runtime.messageManager.createMemory({
-                id: stringToUuid(
-                    currentTweet.id + "-" + client.runtime.agentId
-                ),
-                agentId: client.runtime.agentId,
-                content: {
-                    text: currentTweet.text,
-                    source: "twitter",
-                    url: currentTweet.permanentUrl,
-                    imageUrls: currentTweet.photos.map((p) => p.url) || [],
-                    inReplyTo: currentTweet.inReplyToStatusId
-                        ? stringToUuid(
-                              currentTweet.inReplyToStatusId +
-                                  "-" +
-                                  client.runtime.agentId
-                          )
-                        : undefined,
-                },
-                createdAt: currentTweet.timestamp * 1000,
-                roomId,
-                userId:
-                    currentTweet.authorId === client.profile.id
-                        ? client.runtime.agentId
-                        : stringToUuid(currentTweet.authorId),
-                embedding: getEmbeddingZeroVector(),
-            });
-        }
-
-        if (visited.has(currentTweet.id)) {
-            elizaLogger.debug("Already visited tweet:", currentTweet.id);
-            return;
-        }
-
-        visited.add(currentTweet.id);
-        thread.unshift(currentTweet);
-
-        elizaLogger.debug("Current thread state:", {
-            length: thread.length,
-            currentDepth: depth,
-            tweetId: currentTweet.id,
-        });
-
-        // If there's a parent tweet, fetch and process it
-        if (currentTweet.inReplyToStatusId) {
-            elizaLogger.debug(
-                "Fetching parent tweet:",
-                currentTweet.inReplyToStatusId
-            );
-            try {
-                const parentTweetResult = await client.requestQueue.add(async () => {
-                    return await client.twitterClient.v2.singleTweet(currentTweet.inReplyToStatusId, {
-                        "tweet.fields": "created_at,author_id,conversation_id,entities,referenced_tweets,text",
-                        "expansions": "author_id,referenced_tweets.id"
-                    })
-                });
-                const parentTweet = createElizaTweet(parentTweetResult.data, new TwitterV2IncludesHelper(parentTweetResult));
-
-                if (parentTweet) {
-                    elizaLogger.debug("Found parent tweet:", {
-                        id: parentTweet.id,
-                        text: parentTweet.text?.slice(0, 50),
-                    });
-                    await processThread(parentTweet, depth + 1);
-                } else {
-                    elizaLogger.debug(
-                        "No parent tweet found for:",
-                        currentTweet.inReplyToStatusId
-                    );
-                }
-            } catch (error) {
-                elizaLogger.error("Error fetching parent tweet:", {
-                    tweetId: currentTweet.inReplyToStatusId,
-                    error,
+                await client.runtime.messageManager.createMemory({
+                    id: stringToUuid(
+                        elizaTweet.id + "-" + client.runtime.agentId
+                    ),
+                    agentId: client.runtime.agentId,
+                    content: {
+                        text: elizaTweet.text,
+                        source: "twitter",
+                        url: elizaTweet.permanentUrl,
+                        imageUrls: elizaTweet.photos.map((p) => p.url) || [],
+                        inReplyTo: elizaTweet.inReplyToStatusId
+                            ? stringToUuid(
+                                  elizaTweet.inReplyToStatusId +
+                                      "-" +
+                                      client.runtime.agentId
+                              )
+                            : undefined,
+                    },
+                    createdAt: elizaTweet.timestamp,
+                    roomId,
+                    userId:
+                        elizaTweet.authorId === client.profile.id
+                            ? client.runtime.agentId
+                            : stringToUuid(elizaTweet.authorId),
+                    embedding: getEmbeddingZeroVector(),
                 });
             }
-        } else {
-            elizaLogger.debug(
-                "Reached end of reply chain at:",
-                currentTweet.id
-            );
         }
+
+    
+        return replyChain;
+
+    } catch (error) {
+        elizaLogger.error("Error fetching conversation tweets:", {
+            conversationId: tweet.conversationId,
+            error,
+        });
     }
-
-    await processThread(tweet, 0);
-
-    elizaLogger.debug("Final thread built:", {
-        totalTweets: thread.length,
-        tweetIds: thread.map((t) => ({
-            id: t.id,
-            text: t.text?.slice(0, 50),
-        })),
-    });
-
-    return thread;
 }
 
 export async function fetchMediaData(

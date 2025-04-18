@@ -125,8 +125,6 @@ export class TwitterInteractionClient {
 
             elizaLogger.debug(`Fetched ${mentionCandidates.length} mentions`);
             let uniqueTweetCandidates = [...mentionCandidates];
-            console.log("uniqueTweetCandidates:");
-            console.dir(uniqueTweetCandidates, { depth: null });
 
             // TODO: #TWITTER-V2-005 - Reimplement target users filtering using Twitter API v2
             // const TARGET_USERS = this.client.twitterConfig.TWITTER_TARGET_USERS;            
@@ -220,7 +218,7 @@ export class TwitterInteractionClient {
                     !this.client.lastCheckedTweetId ||
                     BigInt(tweet.id) > this.client.lastCheckedTweetId
                 ) {
-
+                    elizaLogger.log("processing tweet: ", tweet);
                     // Generate the tweetId UUID the same way it's done in handleTweet
                     const tweetId = stringToUuid(`${tweet.id}-${this.runtime.agentId}`);
 
@@ -259,7 +257,8 @@ export class TwitterInteractionClient {
                     const message = {
                         content: { 
                             text: tweet.text,
-                            imageUrls: tweet.photos?.map(photo => photo.url) || []
+                            imageUrls: tweet.photos?.map(photo => photo.url) || [],
+                            source: "twitter"
                         },
                         agentId: this.runtime.agentId,
                         userId: userIdUUID,
