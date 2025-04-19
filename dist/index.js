@@ -25,10 +25,8 @@ var wait = (minTime = 1e3, maxTime = 3e3) => {
   return new Promise((resolve) => setTimeout(resolve, waitTime));
 };
 async function buildConversationThread(tweet, client, maxReplies = 10) {
-  const thread = [];
-  const conversationTweets = [];
-  elizaLogger.debug("Building conversation thread for tweet:");
-  console.dir(tweet, { depth: null });
+  const replyChain = [tweet];
+  elizaLogger.debug("Building conversation thread for tweet:", tweet);
   try {
     const query = `conversation_id:${tweet.conversationId}`;
     const searchResult = await client.twitterClient.v2.search(query, {
@@ -38,26 +36,29 @@ async function buildConversationThread(tweet, client, maxReplies = 10) {
     });
     const tweets = searchResult.data.data;
     const includesHelper = new TwitterV2IncludesHelper(searchResult);
-    tweets.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    for (const tweetData of tweets) {
-      const elizaTweet = createElizaTweet(tweetData, includesHelper);
-      if (!elizaTweet) {
-        continue;
+    if (tweets) {
+      tweets.sort((a, b) => a.created_at.localeCompare(b.created_at));
+      const conversationTweets = [];
+      for (const tweetData of tweets) {
+        const elizaTweet = createElizaTweet(tweetData, includesHelper);
+        if (!elizaTweet) {
+          continue;
+        }
+        conversationTweets.push(elizaTweet);
       }
-      conversationTweets.push(elizaTweet);
-    }
-    const tweetsById = /* @__PURE__ */ new Map();
-    for (const tweet2 of conversationTweets) {
-      tweetsById.set(tweet2.id, tweet2);
-    }
-    const replyChain = [tweet];
-    let currentTweet = tweet;
-    while (currentTweet && currentTweet.inReplyToStatusId) {
-      const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
-      if (parentTweet) {
-        replyChain.push(parentTweet);
+      const tweetsById = /* @__PURE__ */ new Map();
+      for (const tweet2 of conversationTweets) {
+        tweetsById.set(tweet2.id, tweet2);
       }
-      currentTweet = parentTweet;
+      const replyChain2 = [tweet];
+      let currentTweet = tweet;
+      while (currentTweet && currentTweet.inReplyToStatusId) {
+        const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
+        if (parentTweet) {
+          replyChain2.push(parentTweet);
+        }
+        currentTweet = parentTweet;
+      }
     }
     replyChain.reverse();
     elizaLogger.log("replyChain: ", replyChain);

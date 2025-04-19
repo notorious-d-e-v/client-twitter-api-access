@@ -37,12 +37,10 @@ export async function buildConversationThread(
     client: ClientBase,
     maxReplies = 10
 ): Promise<ElizaTweet[]> {
-    const thread: ElizaTweet[] = [];
-    const conversationTweets: ElizaTweet[] = [];
-
-    elizaLogger.debug("Building conversation thread for tweet:");
-    console.dir(tweet, { depth: null });
-
+    const replyChain: ElizaTweet[] = [tweet];
+    
+    elizaLogger.debug("Building conversation thread for tweet:", tweet);
+    
     try {
         // Use the Twitter API v2 search endpoint to get all tweets in the conversation
         const query = `conversation_id:${tweet.conversationId}`;
@@ -51,43 +49,46 @@ export async function buildConversationThread(
             "expansions": "author_id,referenced_tweets.id",
             max_results: 100,
         });
-
+        
         const tweets = searchResult.data.data;
         const includesHelper = new TwitterV2IncludesHelper(searchResult);
 
-        // sort the tweets by timestamp in order to get them from oldest to newest
-        tweets.sort((a, b) => a.created_at.localeCompare(b.created_at));
+        if (tweets) {
 
-        // create the ElizaTweet objects from the returned tweets
-        for (const tweetData of tweets) {
-            const elizaTweet = createElizaTweet(tweetData, includesHelper);
+            // sort the tweets by timestamp in order to get them from oldest to newest
+            tweets.sort((a, b) => a.created_at.localeCompare(b.created_at));
+            
+            // create the ElizaTweet objects from the returned tweets
+            const conversationTweets: ElizaTweet[] = [];
+            for (const tweetData of tweets) {
+                const elizaTweet = createElizaTweet(tweetData, includesHelper);
 
-            if (!elizaTweet) {
-                continue;
+                if (!elizaTweet) {
+                    continue;
+                }
+
+                conversationTweets.push(elizaTweet);
             }
 
-            conversationTweets.push(elizaTweet);
-        }
-
-        // create a mapping of all the tweets by id
-        const tweetsById = new Map<string, ElizaTweet>();
-        for (const tweet of conversationTweets) {
-            tweetsById.set(tweet.id, tweet);
-        }
-    
-        // build the reply chain of the most recent tweet only
-        // filtering out other tweets in the conversation
-        const replyChain = [tweet];
-        let currentTweet = tweet;
-
-        while (currentTweet && currentTweet.inReplyToStatusId) {
-            const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
-            if (parentTweet) {
-                replyChain.push(parentTweet);
+            // create a mapping of all the tweets by id
+            const tweetsById = new Map<string, ElizaTweet>();
+            for (const tweet of conversationTweets) {
+                tweetsById.set(tweet.id, tweet);
             }
-            currentTweet = parentTweet;
+        
+            // build the reply chain of the most recent tweet only
+            // filtering out other tweets in the conversation
+            let currentTweet = tweet;
+
+            while (currentTweet && currentTweet.inReplyToStatusId) {
+                const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
+                if (parentTweet) {
+                    replyChain.push(parentTweet);
+                }
+                currentTweet = parentTweet;
+            }
         }
-    
+
         // reverse the reply chain to get it from oldest to newest
         replyChain.reverse();
         
