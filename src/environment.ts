@@ -37,6 +37,8 @@ export const twitterEnvSchema = z.object({
     TWITTER_RETRY_LIMIT: z.number().int(),
     TWITTER_POLL_INTERVAL: z.number().int(),
     TWITTER_TARGET_USERS: z.array(twitterUsernameSchema).default([]),
+    TWITTER_MENTIONS_LIMIT: z.number().int().default(10),
+    TWITTER_INTERACTIONS_CATCHUP: z.boolean().default(false),
     ENABLE_TWITTER_POST_GENERATION: z.boolean().default(true),
     POST_INTERVAL_MIN: z.number().int(),
     POST_INTERVAL_MAX: z.number().int(),
@@ -117,6 +119,18 @@ export async function validateTwitterConfig(
                     process.env.MAX_TWEET_LENGTH,
                 DEFAULT_MAX_TWEET_LENGTH
             ),
+
+            TWITTER_MENTIONS_LIMIT: safeParseInt(
+                runtime.getSetting("TWITTER_MENTIONS_LIMIT") ||
+                    process.env.TWITTER_MENTIONS_LIMIT,
+                10
+            ),
+
+            TWITTER_INTERACTIONS_CATCHUP:
+                parseBooleanFromText(
+                    runtime.getSetting("TWITTER_INTERACTIONS_CATCHUP") ||
+                        process.env.TWITTER_INTERACTIONS_CATCHUP
+                ) ?? false,
 
             TWITTER_SEARCH_ENABLE:
                 parseBooleanFromText(

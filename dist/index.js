@@ -50,12 +50,11 @@ async function buildConversationThread(tweet, client, maxReplies = 10) {
       for (const tweet2 of conversationTweets) {
         tweetsById.set(tweet2.id, tweet2);
       }
-      const replyChain2 = [tweet];
       let currentTweet = tweet;
       while (currentTweet && currentTweet.inReplyToStatusId) {
         const parentTweet = tweetsById.get(currentTweet.inReplyToStatusId);
         if (parentTweet) {
-          replyChain2.push(parentTweet);
+          replyChain.push(parentTweet);
         }
         currentTweet = parentTweet;
       }
@@ -825,6 +824,8 @@ var twitterEnvSchema = z.object({
   TWITTER_RETRY_LIMIT: z.number().int(),
   TWITTER_POLL_INTERVAL: z.number().int(),
   TWITTER_TARGET_USERS: z.array(twitterUsernameSchema).default([]),
+  TWITTER_MENTIONS_LIMIT: z.number().int().default(10),
+  TWITTER_INTERACTIONS_CATCHUP: z.boolean().default(false),
   ENABLE_TWITTER_POST_GENERATION: z.boolean().default(true),
   POST_INTERVAL_MIN: z.number().int(),
   POST_INTERVAL_MAX: z.number().int(),
@@ -862,6 +863,13 @@ async function validateTwitterConfig(runtime) {
         runtime.getSetting("MAX_TWEET_LENGTH") || process.env.MAX_TWEET_LENGTH,
         DEFAULT_MAX_TWEET_LENGTH
       ),
+      TWITTER_MENTIONS_LIMIT: safeParseInt(
+        runtime.getSetting("TWITTER_MENTIONS_LIMIT") || process.env.TWITTER_MENTIONS_LIMIT,
+        10
+      ),
+      TWITTER_INTERACTIONS_CATCHUP: parseBooleanFromText(
+        runtime.getSetting("TWITTER_INTERACTIONS_CATCHUP") || process.env.TWITTER_INTERACTIONS_CATCHUP
+      ) ?? false,
       TWITTER_SEARCH_ENABLE: parseBooleanFromText(
         runtime.getSetting("TWITTER_SEARCH_ENABLE") || process.env.TWITTER_SEARCH_ENABLE
       ) ?? false,
@@ -1030,7 +1038,6 @@ var TwitterInteractionClient = class {
       this.handleTwitterInteractions();
       setTimeout(
         handleTwitterInteractionsLoop,
-        // Defaults to 2 minutes
         this.client.twitterConfig.TWITTER_POLL_INTERVAL * 1e3
       );
     };
@@ -1040,7 +1047,10 @@ var TwitterInteractionClient = class {
     var _a;
     elizaLogger3.log("Checking Twitter interactions");
     try {
-      const mentionCandidates = await this.client.getMentions(this.client.profile.id, 10);
+      const mentionCandidates = await this.client.getMentions(
+        this.client.profile.id,
+        this.client.twitterConfig.TWITTER_MENTIONS_LIMIT
+      );
       elizaLogger3.debug(`Fetched ${mentionCandidates.length} mentions`);
       let uniqueTweetCandidates = [...mentionCandidates];
       uniqueTweetCandidates.sort((a, b) => a.id.localeCompare(b.id)).filter((tweet) => tweet.authorId !== this.client.profile.id);
@@ -1169,6 +1179,9 @@ Description: ${desc.description}`).join("\n\n")}` : ""
         createdAt: tweet.timestamp * 1e3
       };
       this.client.saveRequestMessage(message2, state);
+    }
+    if (this.client.twitterConfig.TWITTER_INTERACTIONS_CATCHUP) {
+      return;
     }
     const validTargetUsersStr = this.client.twitterConfig.TWITTER_TARGET_USERS.join(",");
     const shouldRespondContext = composeContext({

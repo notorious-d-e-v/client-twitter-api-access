@@ -109,7 +109,6 @@ export class TwitterInteractionClient {
             this.handleTwitterInteractions();
             setTimeout(
                 handleTwitterInteractionsLoop,
-                // Defaults to 2 minutes
                 this.client.twitterConfig.TWITTER_POLL_INTERVAL * 1000
             );
         };
@@ -121,7 +120,10 @@ export class TwitterInteractionClient {
 
         try {
             // Check for mentions
-            const mentionCandidates: ElizaTweet[] = await this.client.getMentions(this.client.profile.id, 10);
+            const mentionCandidates: ElizaTweet[] = await this.client.getMentions(
+                this.client.profile.id,
+                this.client.twitterConfig.TWITTER_MENTIONS_LIMIT
+            );
 
             elizaLogger.debug(`Fetched ${mentionCandidates.length} mentions`);
             let uniqueTweetCandidates = [...mentionCandidates];
@@ -383,6 +385,13 @@ export class TwitterInteractionClient {
                 createdAt: tweet.timestamp * 1000,
             };
             this.client.saveRequestMessage(message, state);
+        }
+
+        // if TWITTER_INTERACTIONS_CATCHUP is true, return early so that
+        // the agent only adds the tweets to the db without responding
+        // to the tweets
+        if (this.client.twitterConfig.TWITTER_INTERACTIONS_CATCHUP) {
+            return
         }
 
         // get usernames into str

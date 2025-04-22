@@ -99,6 +99,10 @@ POST_INTERVAL_MIN=90       # Minimum interval between posts (minutes)
 POST_INTERVAL_MAX=180      # Maximum interval between posts (minutes)
 POST_IMMEDIATELY=false     # Skip approval workflow
 
+# Interactions Settings
+TWITTER_MENTIONS_LIMIT=10    # The number of most recent mentions to fetch and respond to
+TWITTER_INTERACTIONS_CATCHUP=false  # Set to True if you want the agent to add recent mentions to its database, without responding to them. This is useful if you have to delete your database for whatever reason
+
 # Action Processing
 ENABLE_ACTION_PROCESSING=false
 ACTION_INTERVAL=5          # Action check interval (minutes)
